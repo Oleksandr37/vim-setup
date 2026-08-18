@@ -86,7 +86,7 @@ backed_up=false
 
 backup() {
   local target="$1"
-  local relative="${target#$HOME/}"
+  local relative="${target#"$HOME"/}"
   local destination="$backup_root/$relative"
   run mkdir -p "$(dirname "$destination")"
   run mv "$target" "$destination"

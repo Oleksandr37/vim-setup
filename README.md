@@ -46,6 +46,8 @@ The command creates or reuses one tmux window for that repository:
 
 Run `workon .` when your shell is already in the repository. The right pane is a normal shell rooted in the repo: start `codex`, `claude`, or another approved agent yourself. Run `workon` for another repository and it creates or reuses that repo's window. Only active repositories occupy tmux windows; `Ctrl-B c` still creates an ordinary window. Move among windows with `Ctrl-B n` / `Ctrl-B p` or the mouse. The descriptive alias `vim-workspace` is installed too.
 
+When `workon` is invoked by an agent or macOS automation without an attached TTY, it opens the prepared workspace in a new Kitty window automatically.
+
 Pane sizes start as percentages, so they adapt to laptop and external-monitor dimensions. Drag borders with the mouse, or press `Ctrl-B` followed by repeated `H`, `J`, `K`, or `L`.
 
 ## Project tasks (the launch.json replacement)

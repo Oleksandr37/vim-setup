@@ -56,6 +56,17 @@ if [[ "${VIM_SETUP_NO_ATTACH:-0}" == "1" ]]; then
   exit 0
 fi
 
+# Commands launched by an agent or macOS automation may inherit TMUX without
+# owning its client TTY. Open a real Kitty window instead of failing to attach.
+if [[ ! -t 0 || ! -t 1 ]]; then
+  if command -v open >/dev/null 2>&1; then
+    open -na kitty --args --directory "$root" env -u TMUX tmux attach-session -t "$existing_window"
+    exit 0
+  fi
+  printf 'Workspace is ready, but this process has no terminal. Run workon from Kitty.\n' >&2
+  exit 1
+fi
+
 if [[ -n "${TMUX:-}" ]]; then
   tmux switch-client -t "$session"
   tmux select-window -t "$existing_window"

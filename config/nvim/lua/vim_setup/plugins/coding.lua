@@ -29,7 +29,23 @@ return {
         opts = function()
           local testing = vim.env.VIM_SETUP_TESTING == "1"
           return {
-            ensure_installed = testing and {} or { "prettierd", "ruff", "stylua", "tflint" },
+            ensure_installed = testing and {} or {
+              "css-lsp",
+              "docker-compose-language-service",
+              "dockerfile-language-server",
+              "eslint-lsp",
+              "html-lsp",
+              "json-lsp",
+              "lua-language-server",
+              "prettierd",
+              "pyright",
+              "ruff",
+              "stylua",
+              "terraform-ls",
+              "tflint",
+              "typescript-language-server",
+              "yaml-language-server",
+            },
             run_on_start = not testing,
           }
         end,
