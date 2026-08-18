@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: vim-setup-run --root PATH -- COMMAND\n       vim-setup-run --stop\n' >&2
+  exit 2
+}
+
+runner_pane() {
+  tmux list-panes -F '#{pane_id}|#{@vim_setup_role}' | while IFS='|' read -r pane role; do
+    if [[ "$role" == "runner" ]]; then
+      printf '%s\n' "$pane"
+      break
+    fi
+  done
+}
+
+if [[ -z "${TMUX:-}" ]]; then
+  printf 'vim-setup-run must be called from inside tmux.\n' >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == "--stop" ]]; then
+  pane="$(runner_pane)"
+  [[ -n "$pane" ]] || { printf 'No runner pane found.\n' >&2; exit 1; }
+  tmux send-keys -t "$pane" C-c
+  exit 0
+fi
+
+[[ "${1:-}" == "--root" && -n "${2:-}" && "${3:-}" == "--" && -n "${4:-}" ]] || usage
+root="$2"
+command="$4"
+pane="$(runner_pane)"
+
+if [[ -z "$pane" ]]; then
+  pane="$(tmux split-window -v -p 30 -P -F '#{pane_id}' -c "$root")"
+  tmux set-option -p -t "$pane" @vim_setup_role runner
+  tmux select-pane -T runner -t "$pane"
+fi
+
+printf -v quoted_root '%q' "$root"
+tmux send-keys -t "$pane" C-c
+tmux send-keys -t "$pane" -l "cd -- $quoted_root && $command"
+tmux send-keys -t "$pane" Enter

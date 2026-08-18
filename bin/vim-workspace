@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+session="${VIM_SETUP_TMUX_SESSION:-work}"
+root="${1:-$PWD}"
+editor_command="${VIM_SETUP_EDITOR_COMMAND:-nvim}"
+
+if [[ ! -d "$root" ]]; then
+  printf 'Repository path does not exist: %s\n' "$root" >&2
+  exit 1
+fi
+root="$(cd "$root" && pwd -P)"
+
+if git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1; then
+  root="$(git -C "$root" rev-parse --show-toplevel)"
+fi
+
+existing_window=""
+if tmux has-session -t "$session" 2>/dev/null; then
+  while IFS='|' read -r window_id window_path; do
+    if [[ "$window_path" == "$root" ]]; then
+      existing_window="$window_id"
+      break
+    fi
+  done < <(tmux list-windows -t "$session" -F '#{window_id}|#{@vim_setup_path}')
+fi
+
+if [[ -z "$existing_window" ]]; then
+  window_name="$(basename "$root" | tr ':.' '__')"
+  if tmux has-session -t "$session" 2>/dev/null; then
+    editor_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "$session:" -n "$window_name" -c "$root")"
+  else
+    editor_pane="$(tmux new-session -d -P -F '#{pane_id}' -s "$session" -n "$window_name" -c "$root")"
+  fi
+
+  tmux set-option -w -t "$editor_pane" @vim_setup_path "$root"
+  tmux set-option -p -t "$editor_pane" @vim_setup_role editor
+  tmux select-pane -T editor -t "$editor_pane"
+
+  agent_pane="$(tmux split-window -d -h -p 32 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
+  tmux set-option -p -t "$agent_pane" @vim_setup_role agent
+  tmux select-pane -T agent -t "$agent_pane"
+
+  runner_pane="$(tmux split-window -d -v -p 30 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
+  tmux set-option -p -t "$runner_pane" @vim_setup_role runner
+  tmux select-pane -T runner -t "$runner_pane"
+
+  tmux send-keys -t "$editor_pane" -l "$editor_command"
+  tmux send-keys -t "$editor_pane" Enter
+  tmux select-pane -t "$editor_pane"
+  existing_window="$(tmux display-message -p -t "$editor_pane" '#{window_id}')"
+fi
+
+if [[ "${VIM_SETUP_NO_ATTACH:-0}" == "1" ]]; then
+  printf '%s\n' "$existing_window"
+  exit 0
+fi
+
+if [[ -n "${TMUX:-}" ]]; then
+  tmux switch-client -t "$session"
+  tmux select-window -t "$existing_window"
+else
+  exec tmux attach-session -t "$existing_window"
+fi

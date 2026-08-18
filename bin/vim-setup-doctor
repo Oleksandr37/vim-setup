@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+failures=0
+checks=(nvim tmux kitty workon git rg fd fzf lazygit delta magick node npm python3)
+optional_checks=(terraform docker)
+
+printf 'vim-setup doctor\n\n'
+for command in "${checks[@]}"; do
+  if command -v "$command" >/dev/null 2>&1; then
+    printf '  [ok]      %-12s %s\n' "$command" "$(command -v "$command")"
+  else
+    printf '  [missing] %-12s\n' "$command"
+    failures=$((failures + 1))
+  fi
+done
+
+for command in "${optional_checks[@]}"; do
+  if command -v "$command" >/dev/null 2>&1; then
+    printf '  [ok]      %-12s %s\n' "$command" "$(command -v "$command")"
+  else
+    printf '  [optional] %-11s install when the project needs it\n' "$command"
+  fi
+done
+
+printf '\n'
+if [[ -L "$HOME/.config/nvim" ]]; then
+  printf '  [ok]      Neovim config is linked\n'
+else
+  printf '  [info]    Neovim config is not a symlink\n'
+fi
+if [[ -L "$HOME/.config/tmux/tmux.conf" ]]; then
+  printf '  [ok]      tmux config is linked\n'
+else
+  printf '  [info]    tmux config is not a symlink\n'
+fi
+if [[ -L "$HOME/.config/kitty/kitty.conf" ]]; then
+  printf '  [ok]      Kitty config is linked\n'
+else
+  printf '  [info]    Kitty config is not a symlink\n'
+fi
+
+printf '\nRun :checkhealth inside Neovim for LSP/parser details.\n'
+exit "$failures"
