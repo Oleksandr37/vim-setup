@@ -13,7 +13,6 @@ brew "node"
 brew "ruff"
 brew "uv"
 brew "terraform-ls"
-brew "tflint"
 brew "shellcheck"
 
 cask "kitty"
