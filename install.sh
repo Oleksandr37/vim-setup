@@ -110,20 +110,36 @@ link_path() {
 link_path "$script_dir/config/nvim" "$HOME/.config/nvim"
 link_path "$script_dir/config/tmux/tmux.conf" "$HOME/.config/tmux/tmux.conf"
 link_path "$script_dir/config/kitty/kitty.conf" "$HOME/.config/kitty/kitty.conf"
+link_path "$script_dir/config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/vim-workspace"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/workon"
 link_path "$script_dir/bin/vim-setup-run" "$HOME/.local/bin/vim-setup-run"
 link_path "$script_dir/bin/vim-setup-doctor" "$HOME/.local/bin/vim-setup-doctor"
 run mkdir -p "$HOME/.config/vim-setup"
 
+# Packer plugins and parsers compiled by nvim-treesitter's frozen master branch
+# are loaded automatically by Neovim and conflict with the supported 0.12 API.
+legacy_paths=("$HOME/.local/share/nvim/site/pack/packer")
+for legacy_path in "${legacy_paths[@]}"; do
+  if [[ -e "$legacy_path" ]]; then
+    backup "$legacy_path"
+  fi
+done
+treesitter_checkout="$HOME/.local/share/nvim/lazy/nvim-treesitter"
+if [[ -d "$treesitter_checkout/.git" ]] && \
+   [[ "$(git -C "$treesitter_checkout" branch --show-current)" == "master" ]]; then
+  backup "$treesitter_checkout"
+fi
+
 if ! $dry_run && ! $skip_plugins; then
   printf 'Installing pinned Neovim plugins and parsers...\n'
-  nvim --headless "+Lazy! sync" "+TSUpdateSync" +qa
+  nvim --headless "+Lazy! sync" +qa
+  nvim --headless "+lua require('vim_setup.treesitter').install(300000)" +qa
   nvim --headless "+Lazy load mason-lspconfig.nvim" "+MasonToolsInstallSync" +qa
 fi
 
-if ! $dry_run && tmux has-session 2>/dev/null; then
-  tmux source-file "$HOME/.config/tmux/tmux.conf"
+if ! $dry_run && tmux -L vim-work has-session 2>/dev/null; then
+  tmux -L vim-work source-file "$HOME/.config/tmux/tmux.conf"
 fi
 
 if $dry_run; then
