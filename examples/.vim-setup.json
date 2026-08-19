@@ -4,5 +4,10 @@
     "dev": "npm run dev",
     "test": "npm test",
     "lint": "npm run lint"
+  },
+  "services": {
+    "web": "npm run dev",
+    "worker": "npm run worker",
+    "stripe": "stripe listen --forward-to localhost:3000/api/webhooks/stripe"
   }
 }
