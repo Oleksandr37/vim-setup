@@ -22,7 +22,7 @@ For the current local checkout:
 ./install.sh
 ```
 
-The installer is idempotent. It asks Homebrew to install only missing packages, moves existing config to `~/.local/state/vim-setup/backups/<timestamp>`, and links the repository config into place. Legacy Packer plugins and parsers from nvim-treesitter's frozen pre-Neovim-0.12 branch are backed up there too, preventing them from loading alongside the current runtime. Preview everything first with `./install.sh --dry-run`.
+The public bootstrap installs the latest signed GitHub release into a versioned directory under `~/.local/share/workon`; it does not execute an arbitrary plugin update from `main`. A local checkout remains a development installation and links its files directly, so this repository can be tested without replacing it with a release. Both modes ask Homebrew to install only missing packages, move replaced config into a timestamped backup, and restore the plugin commits recorded in `lazy-lock.json`. Preview a local installation first with `./install.sh --dry-run`.
 
 Your existing Neovim/Kitty/tmux configuration is not changed merely by cloning this repository. It changes only when you run the installer.
 
@@ -133,6 +133,12 @@ These files are loaded last and remain outside the repository.
 
 ## Maintenance
 
+- `workon version` shows the active version and whether it is a development checkout.
+- `workon update --check` checks the latest stable GitHub release without installing it.
+- `workon update` verifies, stages, tests, and activates a signed release; `workon rollback` atomically returns to the previous one.
+- A macOS LaunchAgent checks once per hour. It only reads public GitHub release metadata and never opens a work repository or installs anything. When an update exists, an `↑ vX.Y.Z` button appears in the tmux status line; click it to review and install.
+- After activation, clean Workon Neovim instances use Neovim's native session-preserving restart automatically. An instance with unsaved changes waits and restarts as soon as its final modified buffer is saved; changes are never discarded.
+- Editors that were already running before this update feature existed need one initial `:restart`; every Workon editor created afterward registers its own private RPC endpoint and updates automatically.
 - `vim-setup-doctor` checks external dependencies and config links.
 - `:checkhealth` checks Neovim, LSP clients, parsers, and providers.
 - `:Lazy` manages plugins; `:Mason` shows language tools.
@@ -140,8 +146,10 @@ These files are loaded last and remain outside the repository.
 - `./scripts/keymap-audit.sh` rejects duplicate or cross-layer shortcut conflicts and exercises the live shortcut menu keys.
 - `./scripts/smoke.sh` installs into temporary XDG directories and verifies startup without touching your live config.
 - `./scripts/workspace-smoke.sh` creates a disposable tmux server and verifies local per-window repo lists, shared persistent workspaces, fixed-pane terminal/agent decks, services, and runner isolation.
+- `./scripts/update-smoke.sh` creates disposable signed and unsigned release repositories and verifies upgrades, rejection, atomic rollback, managed links, and the hourly LaunchAgent.
 - `./scripts/e2e.sh` opens a temporary project and exercises Markdown, Tree-sitter, shortcuts, search, CodeDiff rendering and explicit file selection, images, and real terminal-driven completion acceptance with both `Enter` and `Tab`.
 - `./scripts/lsp-completion-matrix.sh all` runs isolated, language-specific LSP completion probes. Pass one case such as `python` or `terraform` for a targeted CI/debug run.
 
 See [CHEATSHEET.md](CHEATSHEET.md) for the small set of shortcuts worth learning first.
 For the trust model and plugin supply-chain notes, see [SECURITY.md](SECURITY.md).
+For the one-command signed-tag workflow whose CI job publishes a GitHub Release, see [RELEASING.md](RELEASING.md).

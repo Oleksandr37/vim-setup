@@ -86,6 +86,8 @@ Opening a PNG or SVG file displays the asset directly in Kitty. Image links in M
 
 ## Windows, tmux, and scrolling
 
+- `workon version` shows the active release; `workon update --check` checks manually and `workon update` installs it.
+- Click `[↑ vX.Y.Z]` when it appears in the bottom bar to review and install an available signed release. `workon rollback` returns to the previous release.
 - `workon .` opens the repository in the current Workon window, or reuses an unattached one.
 - `workon --new-window .` opens another macOS Workon window. The same repo shares its persistent workspace; use a Git worktree for independent edits.
 - `Ctrl-B n` / `Ctrl-B p` switches repositories local to this Workon window; `Ctrl-B N` adds one and `Ctrl-B &` removes one from this window.
