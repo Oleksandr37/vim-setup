@@ -1,0 +1,34 @@
+service:
+  name: vim-setup
+  enabled: true
+  features:
+    feature_01: true
+    feature_02: true
+    feature_03: true
+    feature_04: true
+    feature_05: true
+    feature_06: true
+    feature_07: true
+    feature_08: true
+    feature_09: true
+    feature_10: true
+    feature_11: true
+    feature_12: true
+    feature_13: true
+    feature_14: true
+    feature_15: true
+    feature_16: true
+    feature_17: true
+    feature_18: true
+    feature_19: true
+    feature_20: true
+    feature_21: true
+    feature_22: true
+    feature_23: true
+    feature_24: true
+    feature_25: true
+    feature_26: true
+    feature_27: true
+    feature_28: true
+    feature_29: true
+    feature_30: true

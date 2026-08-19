@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_slug="${WORKON_REPO:-Oleksandr37/vim-setup}"
+repo_url="${WORKON_REPO_URL:-https://github.com/${repo_slug}.git}"
+api_url="${WORKON_RELEASES_API_URL:-https://api.github.com/repos/${repo_slug}/releases/latest}"
+install_root="${WORKON_HOME:-$HOME/.local/share/workon}"
+state_root="${WORKON_STATE_HOME:-$HOME/.local/state/workon}"
+tmux_socket="${VIM_SETUP_TMUX_SOCKET:-vim-work}"
+
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  link_target="$(readlink "$script_path")"
+  if [[ "$link_target" == /* ]]; then
+    script_path="$link_target"
+  else
+    script_path="$(cd "$(dirname "$script_path")" && pwd -P)/$link_target"
+  fi
+done
+source_root="$(cd "$(dirname "$script_path")/.." && pwd -P)"
+signers_file="${WORKON_SIGNERS_FILE:-$source_root/security/release-signers}"
+cache_root="$state_root/update"
+release_cache="$cache_root/latest.json"
+etag_file="$cache_root/latest.etag"
+git_cache="$cache_root/repository.git"
+active_lock=""
+
+cleanup_lock() {
+  if [[ -n "$active_lock" ]]; then rmdir "$active_lock" 2>/dev/null || true; fi
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  workon version
+  workon update [--yes]
+  workon update --check [--background]
+  workon update status [--sync-tmux]
+  workon rollback [--yes]
+EOF
+  exit 2
+}
+
+current_version() {
+  if [[ "${WORKON_BACKGROUND_CHECK:-0}" == 1 && -f "$install_root/current/VERSION" ]]; then
+    tr -d '[:space:]' < "$install_root/current/VERSION"
+  elif [[ -f "$source_root/VERSION" ]]; then
+    tr -d '[:space:]' < "$source_root/VERSION"
+  else
+    printf 'unknown'
+  fi
+}
+
+current_tag() {
+  printf 'v%s' "$(current_version)"
+}
+
+validate_tag() {
+  [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+version_is_newer() {
+  local candidate="${1#v}" installed="${2#v}" index
+  local candidate_parts installed_parts
+  IFS=. read -r -a candidate_parts <<< "$candidate"
+  IFS=. read -r -a installed_parts <<< "$installed"
+  for index in 0 1 2; do
+    if (( 10#${candidate_parts[$index]} > 10#${installed_parts[$index]} )); then return 0; fi
+    if (( 10#${candidate_parts[$index]} < 10#${installed_parts[$index]} )); then return 1; fi
+  done
+  return 1
+}
+
+json_value() {
+  local expression="$1" file="$2"
+  jq -er "$expression" "$file"
+}
+
+release_tag() {
+  [[ -s "$release_cache" ]] || return 1
+  json_value '.tag_name | select(type == "string")' "$release_cache"
+}
+
+sync_tmux_status() {
+  local latest="" current="${1:-$(current_tag)}"
+  latest="$(release_tag 2>/dev/null || true)"
+  if validate_tag "$latest" && validate_tag "$current" && version_is_newer "$latest" "$current"; then
+    tmux -L "$tmux_socket" set-option -gq @workon_update_available "$latest" 2>/dev/null || true
+  else
+    tmux -L "$tmux_socket" set-option -gu @workon_update_available 2>/dev/null || true
+  fi
+}
+
+check_release() {
+  local background="${1:-false}" headers body status etag latest current
+  local request_headers=(-H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+  mkdir -p "$cache_root"
+  headers="$(mktemp "$cache_root/headers.XXXXXX")"
+  body="$(mktemp "$cache_root/body.XXXXXX")"
+  trap 'rm -f "${headers:-}" "${body:-}"' RETURN
+  if [[ -s "$etag_file" ]]; then
+    request_headers=(-H "If-None-Match: $(<"$etag_file")")
+  fi
+  set +e
+  status="$(curl -sS -L --connect-timeout 10 --max-time 30 -D "$headers" -o "$body" \
+    -w '%{http_code}' "${request_headers[@]}" "$api_url")"
+  curl_status=$?
+  set -e
+  if (( curl_status != 0 )); then
+    $background && return 0
+    printf 'Could not check GitHub releases. Your current Workon installation was not changed.\n' >&2
+    return 1
+  fi
+  case "$status" in
+    200|000)
+      jq -e '.tag_name | type == "string"' "$body" >/dev/null || {
+        $background && return 0
+        printf 'GitHub returned invalid release metadata.\n' >&2
+        return 1
+      }
+      mv "$body" "$release_cache"
+      etag="$(awk 'BEGIN{IGNORECASE=1} /^etag:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$headers")"
+      if [[ -n "$etag" ]]; then printf '%s\n' "$etag" > "$etag_file"; fi
+      ;;
+    304) ;;
+    404)
+      $background && return 0
+      printf 'No published Workon release exists yet.\n'
+      return 1
+      ;;
+    *)
+      $background && return 0
+      printf 'GitHub release check failed with HTTP %s.\n' "$status" >&2
+      return 1
+      ;;
+  esac
+  latest="$(release_tag)"
+  validate_tag "$latest" || { printf 'Refusing invalid release tag: %s\n' "$latest" >&2; return 1; }
+  current="$(current_tag)"
+  sync_tmux_status
+  if ! $background; then
+    if [[ "$latest" == "$current" ]]; then
+      printf 'Workon %s is current.\n' "$current"
+    elif ! version_is_newer "$latest" "$current"; then
+      printf 'Workon %s is newer than the latest published release %s.\n' "$current" "$latest"
+    else
+      printf 'Workon update available: %s → %s\n' "$current" "$latest"
+    fi
+  fi
+}
+
+ensure_git_cache() {
+  mkdir -p "$cache_root"
+  if [[ ! -d "$git_cache" ]]; then
+    git init --bare -q "$git_cache"
+  fi
+}
+
+fetch_verified_release() {
+  local tag="$1" destination="$2" ref="refs/workon-updates/$1" object_type
+  [[ -f "$signers_file" ]] || { printf 'Release signer policy is missing: %s\n' "$signers_file" >&2; return 1; }
+  ensure_git_cache
+  git -C "$git_cache" fetch -q --no-tags "$repo_url" "+refs/tags/$tag:$ref"
+  object_type="$(git -C "$git_cache" cat-file -t "$ref")"
+  [[ "$object_type" == tag ]] || { printf 'Release %s is not an annotated tag.\n' "$tag" >&2; return 1; }
+  git -C "$git_cache" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers_file" verify-tag "$ref" >/dev/null
+  mkdir -p "$destination"
+  git -C "$git_cache" archive "$ref" | tar -x -C "$destination"
+  [[ "v$(tr -d '[:space:]' < "$destination/VERSION")" == "$tag" ]] || {
+    printf 'Release VERSION does not match its signed tag.\n' >&2
+    return 1
+  }
+}
+
+run_release_nvim() {
+  local release="$1" runtime="$2" output status
+  shift 2
+  set +e
+  output="$(env XDG_CONFIG_HOME="$release/config" XDG_DATA_HOME="$runtime/data" XDG_CACHE_HOME="$runtime/cache" \
+    nvim --headless "$@" +qa 2>&1)"
+  status=$?
+  set -e
+  if (( status != 0 )) || grep -Eiq \
+      'Error detected|E5113:|E492:|vim\.schedule callback|stack traceback|attempt to call|Error executing' \
+      <<< "$output"; then
+    printf '%s\n' "$output" >&2
+    printf 'The staged Neovim runtime failed validation. The active Workon release was not changed.\n' >&2
+    return 1
+  fi
+}
+
+prepare_runtime() {
+  local release="$1" tag="$2" runtime
+  runtime="$install_root/runtimes/$tag"
+  if [[ "${WORKON_UPDATE_SKIP_RUNTIME:-0}" == 1 ]]; then return; fi
+  mkdir -p "$runtime/data" "$runtime/cache"
+  printf 'Restoring the pinned Neovim runtime for %s...\n' "$tag"
+  run_release_nvim "$release" "$runtime" '+Lazy! restore'
+  run_release_nvim "$release" "$runtime" "+lua require('vim_setup.treesitter').install(300000)"
+  run_release_nvim "$release" "$runtime" '+Lazy load mason-lspconfig.nvim' '+MasonToolsInstallSync'
+  run_release_nvim "$release" "$runtime" \
+    "+lua local plugins = vim.tbl_keys(require('lazy.core.config').plugins); require('lazy').load({ plugins = plugins })"
+}
+
+link_managed_path() {
+  local relative="$1" target="$2" source backup
+  source="$install_root/current/$relative"
+  if [[ -L "$target" && "$(readlink "$target")" == "$source" ]]; then return; fi
+  if [[ -e "$target" || -L "$target" ]]; then
+    backup="$state_root/backups/$(date +%Y%m%d-%H%M%S)/${target#"$HOME"/}"
+    mkdir -p "$(dirname "$backup")"
+    mv "$target" "$backup"
+  fi
+  mkdir -p "$(dirname "$target")"
+  ln -s "$source" "$target"
+}
+
+ensure_managed_links() {
+  link_managed_path config/nvim "$HOME/.config/nvim"
+  link_managed_path config/tmux/tmux.conf "$HOME/.config/tmux/tmux.conf"
+  link_managed_path config/kitty/kitty.conf "$HOME/.config/kitty/kitty.conf"
+  link_managed_path config/kitty/kanagawa-dragon.conf "$HOME/.config/kitty/kanagawa-dragon.conf"
+  link_managed_path config/lazygit/config.yml "$HOME/Library/Application Support/lazygit/config.yml"
+  link_managed_path bin/vim-workspace "$HOME/.local/bin/vim-workspace"
+  link_managed_path bin/vim-workspace "$HOME/.local/bin/workon"
+  link_managed_path bin/workon-update "$HOME/.local/bin/workon-update"
+  link_managed_path bin/vim-setup-run "$HOME/.local/bin/vim-setup-run"
+  link_managed_path bin/vim-setup-doctor "$HOME/.local/bin/vim-setup-doctor"
+}
+
+atomic_link() {
+  local target="$1" link="$2" temporary="$install_root/.link.$$.$RANDOM"
+  ln -s "$target" "$temporary"
+  # BSD mv follows a destination symlink to a directory unless -h is used.
+  # Following it would leave the old release active instead of replacing the
+  # pointer, so make the final rename explicitly operate on the link itself.
+  mv -fh "$temporary" "$link"
+}
+
+notify_editors() {
+  local version="$1" socket result restarted=0 waiting=0 reached=0 editor_count=0 unreachable=0
+  command -v nvim >/dev/null 2>&1 || return 0
+  editor_count="$({ tmux -L "$tmux_socket" list-panes -a \
+    -F '#{pane_id}|#{pane_current_command}|#{@vim_setup_role}' 2>/dev/null || true; } | sort -u | \
+    awk -F'|' '$2 == "nvim" && $3 == "editor" { count++ } END { print count + 0 }')"
+  while IFS= read -r socket; do
+    [[ -n "$socket" && -S "$socket" ]] || continue
+    result="$(nvim --server "$socket" --remote-expr \
+      "luaeval(\"require('vim_setup.update').request_restart(_A)\", '$version')" 2>/dev/null || true)"
+    if [[ "$result" == *waiting-for-save* ]]; then
+      waiting=$((waiting + 1)); reached=$((reached + 1))
+    elif [[ "$result" == *restarting* ]]; then
+      restarted=$((restarted + 1)); reached=$((reached + 1))
+    fi
+  done < <(tmux -L "$tmux_socket" list-panes -a -F '#{@workon_nvim_socket}' 2>/dev/null | sort -u || true)
+  unreachable=$((editor_count - reached))
+  if (( restarted > 0 || waiting > 0 )); then
+    printf 'Neovim: %d restarting, %d waiting for modified buffers to be saved.\n' "$restarted" "$waiting"
+  fi
+  if (( unreachable > 0 )); then
+    printf '%d editor(s) predate automatic updates and have no RPC endpoint; run :restart in them once.\n' "$unreachable"
+  fi
+}
+
+reload_terminal_config() {
+  if [[ "${WORKON_UPDATE_TESTING:-0}" == 1 ]]; then return; fi
+  tmux -L "$tmux_socket" source-file "$HOME/.config/tmux/tmux.conf" 2>/dev/null || true
+  while IFS= read -r kitty_pid; do
+    [[ -n "$kitty_pid" ]] && kill -SIGUSR1 "$kitty_pid" 2>/dev/null || true
+  done < <(pgrep -x kitty 2>/dev/null || true)
+}
+
+install_release() {
+  local assume_yes="$1" tag body staging final old="" lock="$cache_root/install.lock"
+  check_release false
+  tag="$(release_tag)"
+  if [[ "$tag" == "$(current_tag)" && -L "$install_root/current" && \
+      -L "$HOME/.local/bin/workon" && "$(readlink "$HOME/.local/bin/workon")" == "$install_root/current/bin/vim-workspace" ]]; then
+    return 0
+  fi
+  if ! version_is_newer "$tag" "$(current_tag)" && [[ "$tag" != "$(current_tag)" ]]; then
+    printf 'Refusing to replace %s with older release %s; use workon rollback instead.\n' "$(current_tag)" "$tag" >&2
+    return 1
+  fi
+  body="$(json_value '.body // ""' "$release_cache" 2>/dev/null || true)"
+  if [[ -n "$body" ]]; then
+    body="$(LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' <<< "$body")"
+    printf '\n%s\n\n' "$body"
+  fi
+  if ! $assume_yes; then
+    [[ -t 0 && -t 1 ]] || { printf 'Run interactively or pass --yes.\n' >&2; return 1; }
+    printf 'Install signed release %s? [y/N] ' "$tag"
+    read -r answer
+    [[ "$answer" == y || "$answer" == Y ]] || { printf 'Update cancelled.\n'; return 0; }
+  fi
+  if ! mkdir "$lock" 2>/dev/null; then
+    printf 'Another Workon update is already running.\n' >&2
+    return 1
+  fi
+  active_lock="$lock"
+  trap cleanup_lock EXIT
+  mkdir -p "$install_root/releases" "$install_root/runtimes"
+  staging="$install_root/releases/.${tag}.staging.$$"
+  final="$install_root/releases/$tag"
+  rm -rf "$staging"
+  fetch_verified_release "$tag" "$staging"
+  bash -n "$staging/install.sh" "$staging/bin/"*
+  prepare_runtime "$staging" "$tag"
+  if [[ ! -d "$final" ]]; then mv "$staging" "$final"; else rm -rf "$staging"; fi
+  if [[ -L "$install_root/current" ]]; then old="$(readlink "$install_root/current")"; fi
+  [[ -z "$old" ]] || atomic_link "$old" "$install_root/previous"
+  atomic_link "$final" "$install_root/current"
+  ensure_managed_links
+  sync_tmux_status "$tag"
+  reload_terminal_config
+  notify_editors "$tag"
+  printf 'Workon is now %s. Roll back with: workon rollback\n' "$tag"
+}
+
+rollback_release() {
+  local assume_yes="$1" current previous previous_tag lock="$cache_root/install.lock"
+  [[ -L "$install_root/current" && -L "$install_root/previous" ]] || {
+    printf 'No previous managed Workon release is available.\n' >&2
+    return 1
+  }
+  current="$(readlink "$install_root/current")"
+  previous="$(readlink "$install_root/previous")"
+  [[ -d "$previous" && -f "$previous/VERSION" ]] || { printf 'Previous release is missing.\n' >&2; return 1; }
+  if ! $assume_yes; then
+    [[ -t 0 && -t 1 ]] || { printf 'Run interactively or pass --yes.\n' >&2; return 1; }
+    printf 'Roll back to v%s? [y/N] ' "$(tr -d '[:space:]' < "$previous/VERSION")"
+    read -r answer
+    [[ "$answer" == y || "$answer" == Y ]] || { printf 'Rollback cancelled.\n'; return 0; }
+  fi
+  mkdir -p "$cache_root"
+  if ! mkdir "$lock" 2>/dev/null; then
+    printf 'Another Workon update or rollback is already running.\n' >&2
+    return 1
+  fi
+  active_lock="$lock"
+  trap cleanup_lock EXIT
+  previous_tag="v$(tr -d '[:space:]' < "$previous/VERSION")"
+  atomic_link "$previous" "$install_root/current"
+  atomic_link "$current" "$install_root/previous"
+  sync_tmux_status "$previous_tag"
+  reload_terminal_config
+  notify_editors "$previous_tag"
+  printf 'Workon rolled back to v%s.\n' "$(tr -d '[:space:]' < "$previous/VERSION")"
+}
+
+command_name="${1:-}"
+shift || true
+case "$command_name" in
+  version)
+    printf 'Workon %s' "$(current_version)"
+    if [[ "$source_root" != "$install_root"/releases/* ]]; then printf ' (development checkout)'; fi
+    printf '\n'
+    ;;
+  check)
+    background=false
+    [[ "${1:-}" == --background ]] && background=true && shift
+    [[ $# -eq 0 ]] || usage
+    check_release "$background"
+    ;;
+  status)
+    if [[ "${1:-}" == --sync-tmux ]]; then sync_tmux_status; shift; fi
+    [[ $# -eq 0 ]] || usage
+    latest="$(release_tag 2>/dev/null || true)"
+    if validate_tag "$latest" && version_is_newer "$latest" "$(current_tag)"; then printf '%s\n' "$latest"; fi
+    ;;
+  install)
+    assume_yes=false
+    [[ "${1:-}" == --yes ]] && assume_yes=true && shift
+    [[ $# -eq 0 ]] || usage
+    install_release "$assume_yes"
+    ;;
+  rollback)
+    assume_yes=false
+    [[ "${1:-}" == --yes ]] && assume_yes=true && shift
+    [[ $# -eq 0 ]] || usage
+    rollback_release "$assume_yes"
+    ;;
+  *) usage ;;
+esac

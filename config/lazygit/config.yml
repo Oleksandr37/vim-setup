@@ -1,0 +1,18 @@
+gui:
+  nerdFontsVersion: "3"
+  sidePanelWidth: 0.3
+  theme:
+    activeBorderColor:
+      - "#8ba4b0"
+      - bold
+    inactiveBorderColor:
+      - "#625e5a"
+    optionsTextColor:
+      - "#8ba4b0"
+    selectedLineBgColor:
+      - "#282727"
+os:
+  # When Lazygit runs in our Neovim popup, open the selected file in the
+  # existing Neovim instance instead of attempting an unsupported nested one.
+  editPreset: nvim-remote
+disableStartupPopups: true

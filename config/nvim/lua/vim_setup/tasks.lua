@@ -76,6 +76,22 @@ local function discover_tasks(root)
   return tasks
 end
 
+local function discover_services(root)
+  local services = {}
+  local config = read_json(root .. "/.vim-setup.json")
+  if config and type(config.services) == "table" then
+    for name, command in pairs(config.services) do
+      if type(name) == "string" and type(command) == "string" and command ~= "" then
+        table.insert(services, { label = name, command = command })
+      end
+    end
+  end
+  table.sort(services, function(a, b)
+    return a.label < b.label
+  end)
+  return services
+end
+
 local function run_in_terminal(root, command)
   vim.cmd("botright 15split")
   vim.cmd("terminal")
@@ -137,12 +153,43 @@ function M.rerun()
 end
 
 function M.stop()
+  local root = project_root()
   if vim.env.TMUX and vim.fn.executable("vim-setup-run") == 1 then
-    vim.fn.jobstart({ "vim-setup-run", "--stop" }, { detach = true })
+    vim.fn.jobstart({ "vim-setup-run", "--stop", "--root", root }, { detach = true })
     vim.notify("Stopped runner task")
   else
     vim.notify("Stop the terminal task with Ctrl-C", vim.log.levels.INFO)
   end
+end
+
+function M.choose_service()
+  local root = project_root()
+  local services = discover_services(root)
+  if #services == 0 then
+    vim.notify("No services found. Add services to .vim-setup.json.", vim.log.levels.WARN)
+    return
+  end
+  vim.ui.select(services, {
+    prompt = "Start or focus project service",
+    format_item = function(service)
+      return service.label .. "  ·  " .. service.command
+    end,
+  }, function(service)
+    if service then
+      vim.fn.jobstart({ "workon", "service", "start", service.label, "--root", root }, { detach = true })
+      vim.notify("Service terminal: " .. service.label)
+    end
+  end)
+end
+
+function M.new_agent()
+  local root = project_root()
+  vim.ui.input({ prompt = "Agent session name: " }, function(name)
+    if name and name ~= "" then
+      vim.fn.jobstart({ "workon", "agent", "new", name, "--root", root }, { detach = true })
+      vim.notify("Agent shell: " .. name)
+    end
+  end)
 end
 
 function M.setup()
@@ -150,12 +197,16 @@ function M.setup()
   vim.api.nvim_create_user_command("TaskSelect", M.choose, {})
   vim.api.nvim_create_user_command("TaskRerun", M.rerun, {})
   vim.api.nvim_create_user_command("TaskStop", M.stop, {})
+  vim.api.nvim_create_user_command("ServiceSelect", M.choose_service, {})
+  vim.api.nvim_create_user_command("AgentNew", M.new_agent, {})
 
   vim.keymap.set("n", "<F5>", M.run_default, { desc = "Run default project task" })
   vim.keymap.set("n", "<leader>rr", M.run_default, { desc = "Run default task" })
   vim.keymap.set("n", "<leader>rt", M.choose, { desc = "Choose task" })
   vim.keymap.set("n", "<leader>rl", M.rerun, { desc = "Run last task" })
   vim.keymap.set("n", "<leader>rs", M.stop, { desc = "Stop task" })
+  vim.keymap.set("n", "<leader>rv", M.choose_service, { desc = "Choose service terminal" })
+  vim.keymap.set("n", "<leader>ra", M.new_agent, { desc = "Create agent shell" })
 end
 
 return M

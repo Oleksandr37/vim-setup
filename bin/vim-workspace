@@ -1,75 +1,638 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-session="${VIM_SETUP_TMUX_SESSION:-work}"
-root="${1:-$PWD}"
+tmux_socket="${VIM_SETUP_TMUX_SOCKET:-vim-work}"
+pool_session="${VIM_SETUP_POOL_SESSION:-__workon_pool}"
+deck_session="${VIM_SETUP_DECK_SESSION:-__workon_decks}"
 editor_command="${VIM_SETUP_EDITOR_COMMAND:-nvim}"
+workon_home="${WORKON_HOME:-$HOME/.local/share/workon}"
+workon_state_home="${WORKON_STATE_HOME:-$HOME/.local/state/workon}"
 
-if [[ ! -d "$root" ]]; then
-  printf 'Repository path does not exist: %s\n' "$root" >&2
-  exit 1
-fi
-root="$(cd "$root" && pwd -P)"
-
-if git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1; then
-  root="$(git -C "$root" rev-parse --show-toplevel)"
-fi
-
-existing_window=""
-if tmux has-session -t "$session" 2>/dev/null; then
-  while IFS='|' read -r window_id window_path; do
-    if [[ "$window_path" == "$root" ]]; then
-      existing_window="$window_id"
-      break
-    fi
-  done < <(tmux list-windows -t "$session" -F '#{window_id}|#{@vim_setup_path}')
-fi
-
-if [[ -z "$existing_window" ]]; then
-  window_name="$(basename "$root" | tr ':.' '__')"
-  if tmux has-session -t "$session" 2>/dev/null; then
-    editor_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "$session:" -n "$window_name" -c "$root")"
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  link_target="$(readlink "$script_path")"
+  if [[ "$link_target" == /* ]]; then
+    script_path="$link_target"
   else
-    editor_pane="$(tmux new-session -d -P -F '#{pane_id}' -s "$session" -n "$window_name" -c "$root")"
+    script_path="$(cd "$(dirname "$script_path")" && pwd -P)/$link_target"
+  fi
+done
+script_root="$(cd "$(dirname "$script_path")/.." && pwd -P)"
+update_command="$script_root/bin/workon-update"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  workon [--new-window] [--view SESSION] [--client CLIENT] [PATH]
+  workon repo remove [--view SESSION] [--target PANE]
+  workon terminal [pick|new [NAME]|switch NAME|close [NAME]] [--root PATH] [--target PANE] [--client CLIENT]
+  workon agent    [pick|new [NAME]|switch NAME|close [NAME]] [--root PATH] [--target PANE] [--client CLIENT]
+  workon service [list|pick|start NAME|restart NAME|stop NAME] [--root PATH] [--target PANE] [--client CLIENT]
+  workon popup terminal|agent|service --root PATH --client CLIENT
+  workon version
+  workon update [--check [--background]|--yes|status [--sync-tmux]]
+  workon rollback [--yes]
+EOF
+  exit 2
+}
+
+tmux_cmd() {
+  tmux -L "$tmux_socket" "$@"
+}
+
+session_exists() {
+  tmux_cmd has-session -t "$1" 2>/dev/null
+}
+
+normalize_root() {
+  local path="$1"
+  [[ -d "$path" ]] || { printf 'Repository path does not exist: %s\n' "$path" >&2; return 1; }
+  path="$(cd "$path" && pwd -P)"
+  if git -C "$path" rev-parse --show-toplevel >/dev/null 2>&1; then
+    path="$(git -C "$path" rev-parse --show-toplevel)"
+  fi
+  printf '%s\n' "$path"
+}
+
+safe_name() {
+  printf '%s' "$1" | tr ':./ ' '____'
+}
+
+ensure_internal_session() {
+  local session="$1" name="$2"
+  if ! session_exists "$session"; then
+    tmux_cmd new-session -d -s "$session" -n "$name"
+    tmux_cmd set-option -p -t "$session:$name" @vim_setup_internal 1
+    tmux_cmd set-option -t "$session" status off
+  fi
+}
+
+pool_window_for_root() {
+  local root="$1"
+  session_exists "$pool_session" || return 0
+  tmux_cmd list-windows -t "$pool_session" -F '#{window_id}|#{@vim_setup_path}' |
+    awk -F'|' -v root="$root" '$2 == root { print $1; exit }'
+}
+
+workspace_pane() {
+  local window="$1" role="$2"
+  tmux_cmd list-panes -t "$window" -F '#{pane_id}|#{@vim_setup_role}' |
+    awk -F'|' -v role="$role" '$2 == role { print $1; exit }'
+}
+
+set_deck_metadata() {
+  local pane="$1" root="$2" deck="$3" name="$4"
+  tmux_cmd set-option -p -t "$pane" @vim_setup_path "$root"
+  tmux_cmd set-option -p -t "$pane" @vim_setup_role "$deck"
+  tmux_cmd set-option -p -t "$pane" @vim_setup_deck "$deck"
+  tmux_cmd set-option -p -t "$pane" @vim_setup_name "$name"
+  tmux_cmd select-pane -T "$deck: $name" -t "$pane"
+}
+
+create_workspace() {
+  local root="$1" base window_name editor_pane agent_pane terminal_pane window
+  local nvim_socket editor_launch version
+  ensure_internal_session "$pool_session" __pool
+  ensure_internal_session "$deck_session" __decks
+
+  base="$(safe_name "$(basename "$root")")"
+  window_name="$base"
+  if tmux_cmd list-windows -t "$pool_session" -F '#{window_name}|#{@vim_setup_path}' |
+      awk -F'|' -v name="$window_name" -v root="$root" '$1 == name && $2 != root { found=1 } END { exit !found }'; then
+    window_name="${base}_$(printf '%s' "$root" | cksum | awk '{print $1}')"
   fi
 
-  tmux set-option -w -t "$editor_pane" @vim_setup_path "$root"
-  tmux set-option -p -t "$editor_pane" @vim_setup_role editor
-  tmux select-pane -T editor -t "$editor_pane"
+  editor_pane="$(tmux_cmd new-window -d -P -F '#{pane_id}' -t "$pool_session:" -n "$window_name" -c "$root")"
+  window="$(tmux_cmd display-message -p -t "$editor_pane" '#{window_id}')"
+  tmux_cmd set-option -w -t "$window" @vim_setup_path "$root"
+  tmux_cmd set-window-option -t "$window" window-size largest
+  tmux_cmd set-option -p -t "$editor_pane" @vim_setup_path "$root"
+  tmux_cmd set-option -p -t "$editor_pane" @vim_setup_role editor
+  tmux_cmd select-pane -T editor -t "$editor_pane"
 
-  agent_pane="$(tmux split-window -d -h -p 32 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
-  tmux set-option -p -t "$agent_pane" @vim_setup_role agent
-  tmux select-pane -T agent -t "$agent_pane"
-
-  runner_pane="$(tmux split-window -d -v -p 30 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
-  tmux set-option -p -t "$runner_pane" @vim_setup_role runner
-  tmux select-pane -T runner -t "$runner_pane"
-
-  tmux send-keys -t "$editor_pane" -l "$editor_command"
-  tmux send-keys -t "$editor_pane" Enter
-  tmux select-pane -t "$editor_pane"
-  existing_window="$(tmux display-message -p -t "$editor_pane" '#{window_id}')"
-fi
-
-if [[ "${VIM_SETUP_NO_ATTACH:-0}" == "1" ]]; then
-  printf '%s\n' "$existing_window"
-  exit 0
-fi
-
-# Commands launched by an agent or macOS automation may inherit TMUX without
-# owning its client TTY. Open a real Kitty window instead of failing to attach.
-if [[ ! -t 0 || ! -t 1 ]]; then
-  if command -v open >/dev/null 2>&1; then
-    open -na kitty --args --directory "$root" env -u TMUX tmux attach-session -t "$existing_window"
-    exit 0
+  if [[ "$editor_command" == nvim ]]; then
+    mkdir -p "$workon_state_home/nvim"
+    nvim_socket="$workon_state_home/nvim/${tmux_socket}-${editor_pane#%}.sock"
+    tmux_cmd set-option -p -t "$editor_pane" @workon_nvim_socket "$nvim_socket"
+    version="$(tr -d '[:space:]' < "$script_root/VERSION" 2>/dev/null || printf development)"
+    if [[ "$script_root" == "$workon_home"/releases/* ]]; then
+      printf -v editor_launch 'env WORKON_VERSION=%q XDG_DATA_HOME=%q nvim --listen %q' \
+        "$version" "$workon_home/runtimes/v$version/data" "$nvim_socket"
+    else
+      printf -v editor_launch 'env WORKON_VERSION=%q nvim --listen %q' "$version" "$nvim_socket"
+    fi
+  else
+    editor_launch="$editor_command"
   fi
-  printf 'Workspace is ready, but this process has no terminal. Run workon from Kitty.\n' >&2
-  exit 1
-fi
 
-if [[ -n "${TMUX:-}" ]]; then
-  tmux switch-client -t "$session"
-  tmux select-window -t "$existing_window"
-else
-  exec tmux attach-session -t "$existing_window"
-fi
+  agent_pane="$(tmux_cmd split-window -d -h -p 32 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
+  set_deck_metadata "$agent_pane" "$root" agent main
+
+  terminal_pane="$(tmux_cmd split-window -d -v -p 30 -P -F '#{pane_id}' -t "$editor_pane" -c "$root")"
+  set_deck_metadata "$terminal_pane" "$root" terminal runner
+  refresh_deck_titles "$root" agent
+  refresh_deck_titles "$root" terminal
+
+  tmux_cmd send-keys -t "$editor_pane" -l "$editor_launch"
+  tmux_cmd send-keys -t "$editor_pane" Enter
+  tmux_cmd select-pane -t "$editor_pane"
+  printf '%s\n' "$window"
+}
+
+ensure_workspace() {
+  local root="$1" window
+  window="$(pool_window_for_root "$root")"
+  if [[ -z "$window" ]]; then
+    window="$(create_workspace "$root")"
+  fi
+  printf '%s\n' "$window"
+}
+
+new_view_name() {
+  local candidate attempt=0
+  if [[ -n "${VIM_SETUP_VIEW_NAME:-}" ]]; then
+    printf '%s\n' "$VIM_SETUP_VIEW_NAME"
+    return
+  fi
+  candidate="workon-$(date +%Y%m%d-%H%M%S)-$$"
+  while session_exists "$candidate"; do
+    attempt=$((attempt + 1))
+    candidate="workon-$(date +%Y%m%d-%H%M%S)-$$-$attempt"
+  done
+  printf '%s\n' "$candidate"
+}
+
+create_view() {
+  local view="$1"
+  tmux_cmd new-session -d -s "$view" -n __empty
+  tmux_cmd set-option -t "$view" @vim_setup_view 1
+}
+
+view_has_root() {
+  local view="$1" root="$2"
+  session_exists "$view" || return 1
+  tmux_cmd list-windows -t "$view" -F '#{@vim_setup_path}' | grep -Fqx "$root"
+}
+
+find_unattached_view() {
+  local root="$1" view attached is_view
+  while IFS='|' read -r view attached is_view; do
+    if [[ "$is_view" == "1" && "$attached" == "0" ]] && view_has_root "$view" "$root"; then
+      printf '%s\n' "$view"
+      return
+    fi
+  done < <(tmux_cmd list-sessions -F '#{session_name}|#{session_attached}|#{@vim_setup_view}' 2>/dev/null || true)
+}
+
+current_view() {
+  local target="${1:-${TMUX_PANE:-}}" view
+  [[ -n "${TMUX:-}" && -n "$target" ]] || return 0
+  view="$(tmux_cmd display-message -p '#S' 2>/dev/null || true)"
+  if [[ -n "$view" && "$(tmux_cmd show-option -qv -t "$view" @vim_setup_view 2>/dev/null || true)" == "1" ]]; then
+    printf '%s\n' "$view"
+    return
+  fi
+  view="$(tmux_cmd display-message -p -t "$target" '#S' 2>/dev/null || true)"
+  if [[ -n "$view" && "$(tmux_cmd show-option -qv -t "$view" @vim_setup_view 2>/dev/null || true)" == "1" ]]; then
+    printf '%s\n' "$view"
+  fi
+}
+
+link_workspace_to_view() {
+  local view="$1" window="$2" root="$3" existing placeholder
+  if ! session_exists "$view"; then
+    create_view "$view"
+  fi
+  existing="$(tmux_cmd list-windows -t "$view" -F '#{window_id}|#{@vim_setup_path}' |
+    awk -F'|' -v root="$root" '$2 == root { print $1; exit }')"
+  if [[ -z "$existing" ]]; then
+    tmux_cmd link-window -s "$window" -t "$view:"
+    existing="$window"
+  fi
+  placeholder="$(tmux_cmd list-windows -t "$view" -F '#{window_id}|#{window_name}' |
+    awk -F'|' '$2 == "__empty" { print $1; exit }')"
+  if [[ -n "$placeholder" ]]; then
+    tmux_cmd kill-window -t "$placeholder"
+  fi
+  tmux_cmd select-window -t "$view:$existing"
+  printf '%s\n' "$existing"
+}
+
+is_workon_view() {
+  local view="$1"
+  [[ -n "$view" ]] && session_exists "$view" &&
+    [[ "$(tmux_cmd show-option -qv -t "$view" @vim_setup_view 2>/dev/null || true)" == "1" ]]
+}
+
+move_client_to_workspace() {
+  local client="$1" root="$2" window="$3" current view
+  [[ -n "$client" ]] || return 0
+  current="$(tmux_cmd display-message -p -c "$client" '#S' 2>/dev/null || true)"
+  if is_workon_view "$current"; then
+    view="$current"
+  else
+    view="$(find_unattached_view "$root")"
+    [[ -n "$view" ]] || view="$(new_view_name)"
+  fi
+  link_workspace_to_view "$view" "$window" "$root" >/dev/null
+  tmux_cmd switch-client -c "$client" -t "$view:$window"
+}
+
+popup_command() {
+  local kind="${1:-}" root="" client="" executable quoted_executable quoted_root quoted_client
+  [[ "$kind" == "terminal" || "$kind" == "agent" || "$kind" == "service" ]] || usage
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --root) [[ $# -ge 2 ]] || usage; root="$2"; shift 2 ;;
+      --client) [[ $# -ge 2 ]] || usage; client="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [[ -n "$root" && -n "$client" ]] || usage
+  root="$(normalize_root "$root")"
+  executable="$(command -v workon 2>/dev/null || true)"
+  [[ -n "$executable" ]] || executable="${BASH_SOURCE[0]}"
+  printf -v quoted_executable '%q' "$executable"
+  printf -v quoted_root '%q' "$root"
+  printf -v quoted_client '%q' "$client"
+  tmux_cmd display-popup -E -c "$client" -w 60% -h 65% -d "$root" \
+    "$quoted_executable $kind pick --root $quoted_root --client $quoted_client"
+}
+
+root_from_context() {
+  local explicit="$1" target="$2" root=""
+  if [[ -n "$explicit" ]]; then
+    normalize_root "$explicit"
+    return
+  fi
+  if [[ -n "$target" ]]; then
+    root="$(tmux_cmd show-option -pqv -t "$target" @vim_setup_path 2>/dev/null || true)"
+    if [[ -z "$root" ]]; then
+      root="$(tmux_cmd display-message -p -t "$target" '#{@vim_setup_path}' 2>/dev/null || true)"
+    fi
+  fi
+  normalize_root "${root:-$PWD}"
+}
+
+all_unique_panes() {
+  tmux_cmd list-panes -a -F '#{pane_id}|#{@vim_setup_path}|#{@vim_setup_deck}|#{@vim_setup_name}|#{window_id}|#S' |
+    awk -F'|' '!seen[$1]++'
+}
+
+deck_panes() {
+  local root="$1" deck="$2"
+  all_unique_panes | awk -F'|' -v root="$root" -v deck="$deck" '$2 == root && $3 == deck'
+}
+
+find_deck_pane() {
+  local root="$1" deck="$2" name="$3"
+  deck_panes "$root" "$deck" | awk -F'|' -v name="$name" '$4 == name { print $1; exit }'
+}
+
+visible_deck_pane() {
+  local root="$1" deck="$2" window
+  window="$(pool_window_for_root "$root")"
+  [[ -n "$window" ]] || return 0
+  tmux_cmd list-panes -t "$window" -F '#{pane_id}|#{@vim_setup_deck}' |
+    awk -F'|' -v deck="$deck" '$2 == deck { print $1; exit }'
+}
+
+deck_count() {
+  deck_panes "$1" "$2" | wc -l | tr -d ' '
+}
+
+refresh_deck_titles() {
+  local root="$1" deck="$2" count pane name index=0 window visible position
+  count="$(deck_count "$root" "$deck")"
+  while IFS='|' read -r pane _ _ name _ _; do
+    index=$((index + 1))
+    tmux_cmd set-option -p -t "$pane" @vim_setup_position "$index/$count"
+    tmux_cmd select-pane -T "$deck: $name [$index/$count]" -t "$pane"
+  done < <(deck_panes "$root" "$deck" | sort -t'|' -k4,4)
+  window="$(pool_window_for_root "$root")"
+  visible="$(visible_deck_pane "$root" "$deck")"
+  if [[ -n "$window" && -n "$visible" ]]; then
+    position="$(tmux_cmd show-option -pqv -t "$visible" @vim_setup_position)"
+    tmux_cmd set-option -w -t "$window" "@vim_setup_${deck}_position" "$position"
+  fi
+}
+
+create_deck_pane() {
+  local root="$1" deck="$2" name="$3" pane window_name
+  ensure_internal_session "$deck_session" __decks
+  [[ -z "$(find_deck_pane "$root" "$deck" "$name")" ]] || {
+    printf '%s already has a %s named %s.\n' "$(basename "$root")" "$deck" "$name" >&2
+    return 1
+  }
+  window_name="$(safe_name "${deck}_${name}")"
+  pane="$(tmux_cmd new-window -d -P -F '#{pane_id}' -t "$deck_session:" -n "$window_name" -c "$root")"
+  set_deck_metadata "$pane" "$root" "$deck" "$name"
+  printf '%s\n' "$pane"
+}
+
+switch_deck() {
+  local root="$1" deck="$2" name="$3" source target
+  source="$(find_deck_pane "$root" "$deck" "$name")"
+  [[ -n "$source" ]] || { printf 'No %s named %s for %s.\n' "$deck" "$name" "$root" >&2; return 1; }
+  target="$(visible_deck_pane "$root" "$deck")"
+  [[ -n "$target" ]] || { printf 'No visible %s pane for %s.\n' "$deck" "$root" >&2; return 1; }
+  if [[ "$source" != "$target" ]]; then
+    tmux_cmd swap-pane -d -s "$source" -t "$target"
+  fi
+  tmux_cmd select-pane -t "$source"
+  refresh_deck_titles "$root" "$deck"
+}
+
+prompt_name() {
+  local deck="$1" name=""
+  if [[ -t 0 && -t 1 ]]; then
+    printf 'New %s name: ' "$deck" >&2
+    IFS= read -r name
+  fi
+  [[ -n "$name" ]] || { printf '%s name is required.\n' "$deck" >&2; return 1; }
+  printf '%s\n' "$name"
+}
+
+next_deck_name() {
+  local root="$1" deck="$2" prefix number=1
+  if [[ "$deck" == "terminal" ]]; then prefix=shell; else prefix=agent; fi
+  while [[ -n "$(find_deck_pane "$root" "$deck" "$prefix-$number")" ]]; do
+    number=$((number + 1))
+  done
+  printf '%s-%s\n' "$prefix" "$number"
+}
+
+pick_deck() {
+  local root="$1" deck="$2" target="$3" selected names
+  names="$(deck_panes "$root" "$deck" | awk -F'|' '{print $4}' | sort)"
+  [[ -n "$names" ]] || { printf 'No %s sessions found.\n' "$deck" >&2; return 1; }
+  if command -v fzf >/dev/null 2>&1; then
+    selected="$(printf '%s\n' "$names" | fzf --prompt="${deck}> " --height=100% --reverse)" || return 0
+  else
+    printf '%s\n' "$names"
+    return 0
+  fi
+  [[ -n "$selected" ]] && switch_deck "$root" "$deck" "$selected"
+  [[ -z "$target" ]] || tmux_cmd select-pane -t "$(find_deck_pane "$root" "$deck" "$selected")"
+}
+
+close_deck() {
+  local root="$1" deck="$2" name="$3" pane visible replacement count
+  pane="$(find_deck_pane "$root" "$deck" "$name")"
+  [[ -n "$pane" ]] || { printf 'No %s named %s.\n' "$deck" "$name" >&2; return 1; }
+  count="$(deck_count "$root" "$deck")"
+  (( count > 1 )) || { printf 'Cannot close the last %s session.\n' "$deck" >&2; return 1; }
+  visible="$(visible_deck_pane "$root" "$deck")"
+  if [[ "$pane" == "$visible" ]]; then
+    replacement="$(deck_panes "$root" "$deck" | awk -F'|' -v pane="$pane" '$1 != pane { print $1; exit }')"
+    tmux_cmd swap-pane -d -s "$replacement" -t "$pane"
+  fi
+  tmux_cmd kill-pane -t "$pane"
+  refresh_deck_titles "$root" "$deck"
+}
+
+deck_command() {
+  local deck="$1"; shift
+  local action="${1:-pick}" name="" root_arg="" target="${TMUX_PANE:-}" client=""
+  [[ $# -eq 0 ]] || shift
+  if [[ "$action" != "pick" && "$action" != "new" && "$action" != "switch" && "$action" != "close" && "$action" != "list" ]]; then
+    name="$action"
+    action=switch
+  elif [[ "$action" == "new" || "$action" == "switch" || "$action" == "close" ]]; then
+    if [[ $# -gt 0 && "${1:-}" != --* ]]; then name="$1"; shift; fi
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --root) [[ $# -ge 2 ]] || usage; root_arg="$2"; shift 2 ;;
+      --target) [[ $# -ge 2 ]] || usage; target="$2"; shift 2 ;;
+      --client) [[ $# -ge 2 ]] || usage; client="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  local root pane window
+  root="$(root_from_context "$root_arg" "$target")"
+  window="$(ensure_workspace "$root")"
+  case "$action" in
+    list) deck_panes "$root" "$deck" | awk -F'|' '{print $4}' | sort ;;
+    pick) pick_deck "$root" "$deck" "$target" ;;
+    new)
+      if [[ -z "$name" ]]; then
+        if [[ -t 0 && -t 1 ]]; then name="$(prompt_name "$deck")"; else name="$(next_deck_name "$root" "$deck")"; fi
+      fi
+      pane="$(create_deck_pane "$root" "$deck" "$name")"
+      switch_deck "$root" "$deck" "$name"
+      refresh_deck_titles "$root" "$deck"
+      ;;
+    switch) [[ -n "$name" ]] || usage; switch_deck "$root" "$deck" "$name" ;;
+    close)
+      if [[ -z "$name" ]]; then
+        pane="$(visible_deck_pane "$root" "$deck")"
+        name="$(tmux_cmd show-option -pqv -t "$pane" @vim_setup_name)"
+      fi
+      close_deck "$root" "$deck" "$name"
+      ;;
+  esac
+  move_client_to_workspace "$client" "$root" "$window"
+}
+
+service_command() {
+  local action="${1:-pick}" name="" root_arg="" target="${TMUX_PANE:-}" client=""
+  [[ $# -eq 0 ]] || shift
+  if [[ "$action" != "list" && "$action" != "pick" && "$action" != "start" && "$action" != "restart" && "$action" != "stop" ]]; then
+    name="$action"
+    action=start
+  elif [[ "$action" == "start" || "$action" == "restart" || "$action" == "stop" ]]; then
+    [[ $# -gt 0 && "${1:-}" != --* ]] || usage
+    name="$1"; shift
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --root) [[ $# -ge 2 ]] || usage; root_arg="$2"; shift 2 ;;
+      --target) [[ $# -ge 2 ]] || usage; target="$2"; shift 2 ;;
+      --client) [[ $# -ge 2 ]] || usage; client="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  local root config services selected command pane deck_name window
+  root="$(root_from_context "$root_arg" "$target")"
+  window="$(ensure_workspace "$root")"
+  config="$root/.vim-setup.json"
+  [[ -f "$config" ]] || { printf 'No .vim-setup.json in %s.\n' "$root" >&2; return 1; }
+  command -v jq >/dev/null 2>&1 || { printf 'jq is required for services.\n' >&2; return 1; }
+  services="$(jq -r '.services // {} | keys[]' "$config")"
+  case "$action" in
+    list) printf '%s\n' "$services" ; move_client_to_workspace "$client" "$root" "$window"; return ;;
+    pick)
+      [[ -n "$services" ]] || { printf 'No services configured.\n' >&2; return 1; }
+      if command -v fzf >/dev/null 2>&1; then
+        selected="$(printf '%s\n' "$services" | fzf --prompt='service> ' --height=100% --reverse)" || return 0
+      else
+        printf '%s\n' "$services"
+        return
+      fi
+      name="$selected"; action=start
+      ;;
+  esac
+  command="$(jq -er --arg name "$name" '.services[$name] | select(type == "string" and length > 0)' "$config")" || {
+    printf 'Unknown service: %s\n' "$name" >&2
+    return 1
+  }
+  deck_name="service:$name"
+  pane="$(find_deck_pane "$root" terminal "$deck_name")"
+  if [[ "$action" == "stop" ]]; then
+    [[ -n "$pane" ]] || { printf 'Service %s has no terminal.\n' "$name" >&2; return 1; }
+    tmux_cmd send-keys -t "$pane" C-c
+    move_client_to_workspace "$client" "$root" "$window"
+    return
+  fi
+  if [[ -z "$pane" ]]; then
+    pane="$(create_deck_pane "$root" terminal "$deck_name")"
+    action=restart
+  fi
+  switch_deck "$root" terminal "$deck_name"
+  if [[ "$action" == "restart" ]]; then
+    printf -v quoted_root '%q' "$root"
+    tmux_cmd send-keys -t "$pane" C-c
+    tmux_cmd send-keys -t "$pane" -l "cd -- $quoted_root && $command"
+    tmux_cmd send-keys -t "$pane" Enter
+  fi
+  move_client_to_workspace "$client" "$root" "$window"
+}
+
+remove_repo_from_view() {
+  local target="${1:-${TMUX_PANE:-}}" view="${2:-}" window count
+  [[ -n "$target" ]] || { printf 'repo remove must run inside Workon.\n' >&2; return 1; }
+  [[ -n "$view" ]] || view="$(current_view "$target")"
+  [[ -n "$view" ]] || { printf 'Current tmux session is not a Workon view.\n' >&2; return 1; }
+  window="$(tmux_cmd display-message -p -t "$target" '#{window_id}')"
+  count="$(tmux_cmd list-windows -t "$view" -F '#{window_id}' | wc -l | tr -d ' ')"
+  if (( count == 1 )); then
+    tmux_cmd detach-client -s "$view"
+    tmux_cmd kill-session -t "$view"
+  else
+    tmux_cmd unlink-window -t "$view:$window"
+  fi
+}
+
+open_workspace() {
+  local root="$PWD" force_new=false requested_view="" target="${TMUX_PANE:-}" client="" contextual_view=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --new-window) force_new=true; shift ;;
+      --view) [[ $# -ge 2 ]] || usage; requested_view="$2"; shift 2 ;;
+      --target) [[ $# -ge 2 ]] || usage; target="$2"; shift 2 ;;
+      --client) [[ $# -ge 2 ]] || usage; client="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*) usage ;;
+      *) root="$1"; shift; [[ $# -eq 0 ]] || usage ;;
+    esac
+  done
+  root="$(normalize_root "$root")"
+  if [[ -x "$update_command" ]]; then
+    "$update_command" status --sync-tmux >/dev/null 2>&1 || true
+  fi
+  local window view attach_target current=""
+  window="$(ensure_workspace "$root")"
+  if [[ -n "$requested_view" ]] && session_exists "$requested_view" && ! is_workon_view "$requested_view"; then
+    requested_view=""
+  fi
+  if [[ -n "$requested_view" ]]; then
+    view="$requested_view"
+    contextual_view=true
+  elif ! $force_new; then
+    current="$(current_view "$target")"
+    if [[ -n "$current" ]]; then
+      view="$current"
+    else
+      view="$(find_unattached_view "$root")"
+    fi
+  fi
+  [[ -n "${view:-}" ]] || view="$(new_view_name)"
+  link_workspace_to_view "$view" "$window" "$root" >/dev/null
+  attach_target="$view:$window"
+
+  if [[ -n "$client" ]]; then
+    tmux_cmd switch-client -c "$client" -t "$attach_target"
+    return
+  fi
+
+  if [[ "${VIM_SETUP_NO_ATTACH:-0}" == "1" ]]; then
+    printf '%s\n' "$attach_target"
+    return
+  fi
+  # A prefixed tmux binding or an agent shell can invoke Workon without owning
+  # a TTY. The target pane still identifies its existing Workon view, which has
+  # already selected the requested repo; attaching a second Kitty client would
+  # incorrectly make two macOS windows share one view's current-repo state.
+  if [[ "$force_new" == false && ( -n "$current" || "$contextual_view" == true ) && ( ! -t 0 || ! -t 1 ) ]]; then
+    return
+  fi
+  if $force_new || [[ ! -t 0 || ! -t 1 || -z "${TMUX:-}" ]]; then
+    if [[ -t 0 && -t 1 && -z "${TMUX:-}" && "$force_new" == false ]]; then
+      exec tmux -L "$tmux_socket" attach-session -t "$attach_target"
+    elif command -v open >/dev/null 2>&1; then
+      open -na kitty --args --directory "$root" env -u TMUX tmux -L "$tmux_socket" attach-session -t "$attach_target"
+    else
+      printf 'Workspace is ready. Attach with: tmux -L %s attach -t %s\n' "$tmux_socket" "$attach_target" >&2
+      return 1
+    fi
+  else
+    tmux_cmd switch-client -t "$attach_target"
+  fi
+}
+
+case "${1:-}" in
+  version)
+    shift
+    [[ $# -eq 0 && -x "$update_command" ]] || usage
+    exec "$update_command" version
+    ;;
+  update)
+    shift
+    [[ -x "$update_command" ]] || { printf 'Workon updater is unavailable.\n' >&2; exit 1; }
+    if [[ "${1:-}" == --check ]]; then
+      shift
+      exec "$update_command" check "$@"
+    elif [[ "${1:-}" == status ]]; then
+      shift
+      exec "$update_command" status "$@"
+    else
+      exec "$update_command" install "$@"
+    fi
+    ;;
+  rollback)
+    shift
+    [[ -x "$update_command" ]] || { printf 'Workon updater is unavailable.\n' >&2; exit 1; }
+    exec "$update_command" rollback "$@"
+    ;;
+  terminal|agent)
+    deck="$1"; shift
+    deck_command "$deck" "$@"
+    ;;
+  service)
+    shift
+    service_command "$@"
+    ;;
+  popup)
+    shift
+    popup_command "$@"
+    ;;
+  repo)
+    shift
+    [[ "${1:-}" == "remove" ]] || usage
+    shift
+    target="${TMUX_PANE:-}"
+    view=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --target) [[ -n "${2:-}" ]] || usage; target="$2"; shift 2 ;;
+        --view) [[ -n "${2:-}" ]] || usage; view="$2"; shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    [[ $# -eq 0 ]] || usage
+    remove_repo_from_view "$target" "$view"
+    ;;
+  *) open_workspace "$@" ;;
+esac

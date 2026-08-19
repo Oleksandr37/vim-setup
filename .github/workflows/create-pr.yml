@@ -1,0 +1,60 @@
+name: Create owner-reviewed PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      head:
+        description: Existing branch to propose
+        required: true
+        type: string
+      title:
+        description: Pull request title
+        required: true
+        type: string
+      body:
+        description: Optional pull request description
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  create:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open pull request as GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ inputs.head }}
+          PR_BODY: ${{ inputs.body }}
+          PR_TITLE: ${{ inputs.title }}
+        run: |
+          set -euo pipefail
+          if [[ "$HEAD_BRANCH" == "main" ]] || ! git check-ref-format --branch "$HEAD_BRANCH" >/dev/null; then
+            echo "Invalid pull request branch: $HEAD_BRANCH" >&2
+            exit 1
+          fi
+
+          existing_url="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$HEAD_BRANCH" \
+            --state open \
+            --json url \
+            --jq '.[0].url // empty')"
+          if [[ -n "$existing_url" ]]; then
+            echo "Pull request already exists: $existing_url"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$HEAD_BRANCH" \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY"

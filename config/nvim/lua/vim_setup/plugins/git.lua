@@ -1,11 +1,8 @@
 local function lazygit()
-  if vim.env.TMUX then
-    vim.fn.jobstart({
-      "tmux", "display-popup", "-E", "-w", "95%", "-h", "95%", "-d", vim.fn.getcwd(), "lazygit",
-    }, { detach = true })
-  else
-    Snacks.lazygit()
-  end
+  -- Snacks runs Lazygit in a Neovim terminal float and wires `e` back to the
+  -- current Neovim instance. A tmux popup is a separate terminal, so Lazygit's
+  -- nvim-remote preset cannot return the selected file to this editor.
+  Snacks.lazygit()
 end
 
 return {
@@ -35,25 +32,76 @@ return {
     },
   },
   {
-    "sindrets/diffview.nvim",
-    cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewFileHistory", "DiffviewToggleFiles", "DiffviewFocusFiles" },
-    dependencies = { "nvim-lua/plenary.nvim", "echasnovski/mini.icons" },
-    opts = {
-      enhanced_diff_hl = true,
-      view = { merge_tool = { layout = "diff3_mixed" } },
-    },
+    "esmuellert/codediff.nvim",
+    cmd = "CodeDiff",
+    -- Build the pinned source locally instead of using CodeDiff's automatic
+    -- release-binary download, which currently has no checksum verification.
+    build = "./build.sh",
+    init = function()
+      -- If the source build is missing or broken, fail closed. Do not let the
+      -- plugin silently fall back to downloading an unverified release binary.
+      vim.env.VSCODE_DIFF_NO_AUTO_INSTALL = "1"
+
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = "codediff-explorer",
+        callback = function(event)
+          -- A tree is vertically navigated and already truncates long paths.
+          -- Ignore trackpad/shift-wheel horizontal gestures in this pane.
+          for _, key in ipairs({
+            "<ScrollWheelLeft>",
+            "<ScrollWheelRight>",
+            "<S-ScrollWheelUp>",
+            "<S-ScrollWheelDown>",
+          }) do
+            vim.keymap.set("n", key, "<Nop>", { buffer = event.buf, silent = true })
+          end
+        end,
+      })
+    end,
     keys = {
-      { "<leader>gd", "<cmd>DiffviewOpen<CR>", desc = "Review repository diff" },
-      { "<leader>gc", "<cmd>DiffviewClose<CR>", desc = "Close diff review" },
-      { "<leader>gh", "<cmd>DiffviewFileHistory %<CR>", desc = "Current file history" },
-      { "<leader>gH", "<cmd>DiffviewFileHistory<CR>", desc = "Repository history" },
+      { "<leader>gg", "<cmd>CodeDiff<cr>", desc = "Review changes" },
+      { "<leader>gf", "<cmd>CodeDiff<cr>", desc = "Changed files" },
+    },
+    opts = {
+      highlights = {
+        line_insert = "#173d24",
+        line_delete = "#4a2025",
+        char_insert = "#285d36",
+        char_delete = "#71313a",
+      },
+      diff = {
+        layout = "inline",
+        filler_text = "",
+        max_computation_time_ms = 5000,
+        compact = false,
+      },
+      explorer = {
+        position = "left",
+        width = 36,
+        initial_focus = "explorer",
+        view_mode = "tree",
+        focus_on_select = false,
+        auto_open_on_cursor = false,
+        auto_refresh = true,
+      },
+      keymaps = {
+        view = {
+          quit = { "q", "<Esc>" },
+          open_in_prev_tab = { "gf", "o" },
+          toggle_stage = { "-", "<Tab>" },
+        },
+        explorer = {
+          -- Leave mouse press unbound so Neovim first moves the cursor to the
+          -- clicked row, then select that row when the button is released.
+          select = { "<CR>", "<LeftRelease>" },
+        },
+      },
     },
   },
   {
     "folke/snacks.nvim",
     keys = {
-      { "<leader>gg", lazygit, desc = "Lazygit popup" },
-      { "<leader>gf", function() Snacks.picker.git_status() end, desc = "Changed files" },
+      { "<leader>gG", lazygit, desc = "Lazygit actions" },
       { "<leader>gl", function() Snacks.picker.git_log() end, desc = "Git log" },
     },
   },

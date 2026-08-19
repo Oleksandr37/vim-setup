@@ -1,32 +1,3 @@
-local parsers = {
-  "bash",
-  "css",
-  "diff",
-  "dockerfile",
-  "git_config",
-  "git_rebase",
-  "gitcommit",
-  "gitignore",
-  "hcl",
-  "html",
-  "javascript",
-  "json",
-  "jsonc",
-  "lua",
-  "luadoc",
-  "markdown",
-  "markdown_inline",
-  "python",
-  "query",
-  "regex",
-  "terraform",
-  "tsx",
-  "typescript",
-  "vim",
-  "vimdoc",
-  "yaml",
-}
-
 return {
   {
     "folke/snacks.nvim",
@@ -73,17 +44,11 @@ return {
   },
   {
     "nvim-treesitter/nvim-treesitter",
-    branch = "master",
+    branch = "main",
+    lazy = false,
     build = ":TSUpdate",
-    event = { "BufReadPost", "BufNewFile" },
-    cmd = { "TSUpdateSync", "TSUpdate", "TSInstall" },
-    opts = {
-      ensure_installed = vim.env.VIM_SETUP_TESTING == "1" and {} or parsers,
-      highlight = { enable = true },
-      indent = { enable = true, disable = { "python" } },
-    },
-    config = function(_, opts)
-      require("nvim-treesitter.configs").setup(opts)
+    config = function()
+      require("vim_setup.treesitter").setup()
     end,
   },
   {

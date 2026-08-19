@@ -1,0 +1,32 @@
+name: Workon CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test dependencies
+        run: brew bundle --no-upgrade --file Brewfile.ci
+      - name: Static and shortcut checks
+        run: ./scripts/check.sh
+      - name: Signed updater and rollback
+        run: |
+          ./scripts/release-smoke.sh
+          ./scripts/update-smoke.sh
+      - name: Neovim smoke test
+        run: ./scripts/smoke.sh
+      - name: Workspace smoke test
+        run: ./scripts/workspace-smoke.sh
+      - name: Full terminal end-to-end test
+        run: ./scripts/e2e.sh
