@@ -44,7 +44,9 @@ return {
   },
   {
     "folke/which-key.nvim",
-    event = "VeryLazy",
+    -- WhichKey initializes on VimEnter. Loading it from the same first keypress
+    -- that calls show() races that initialization and makes the shortcut fail.
+    lazy = false,
     dependencies = { "echasnovski/mini.icons" },
     opts = {
       preset = "modern",
@@ -64,9 +66,12 @@ return {
     keys = {
       {
         "<leader>?",
-        function()
-          require("which-key").show({ global = true })
-        end,
+        "<cmd>WhichKey<CR>",
+        desc = "All shortcuts",
+      },
+      {
+        "<leader>/",
+        "<cmd>WhichKey<CR>",
         desc = "All shortcuts",
       },
     },
