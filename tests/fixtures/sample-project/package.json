@@ -1,0 +1,10 @@
+{
+  "name": "vim-setup-e2e-fixture",
+  "private": true,
+  "scripts": {
+    "dev": "node --version"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
