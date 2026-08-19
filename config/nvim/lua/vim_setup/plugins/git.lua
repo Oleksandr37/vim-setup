@@ -1,11 +1,88 @@
 local function lazygit()
-  if vim.env.TMUX then
-    vim.fn.jobstart({
-      "tmux", "display-popup", "-E", "-w", "95%", "-h", "95%", "-d", vim.fn.getcwd(), "lazygit",
-    }, { detach = true })
-  else
-    Snacks.lazygit()
+  -- Snacks runs Lazygit in a Neovim terminal float and wires `e` back to the
+  -- current Neovim instance. A tmux popup is a separate terminal, so Lazygit's
+  -- nvim-remote preset cannot return the selected file to this editor.
+  Snacks.lazygit()
+end
+
+local function scroll_diff(picker, up)
+  local preview = picker.preview.win
+  if not preview:valid() then
+    return
   end
+
+  -- Snacks' built-in preview scroll uses the window's half-page `scroll`
+  -- value. That is appropriate for Ctrl-D/U, but much too large for one
+  -- mouse-wheel tick. Match Neovim's native vertical wheel distance instead.
+  local lines = tonumber(vim.o.mousescroll:match("ver:(%d+)")) or 3
+  local focused_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_call(preview.win, function()
+    vim.cmd("normal! " .. lines .. vim.keycode(up and "<C-y>" or "<C-e>"))
+  end)
+
+  -- nvim_win_call normally restores this itself. Keeping it explicit makes
+  -- the review invariant clear: scrolling the diff never transfers focus.
+  if vim.api.nvim_win_is_valid(focused_win) then
+    vim.api.nvim_set_current_win(focused_win)
+  end
+end
+
+local function review_changes()
+  Snacks.picker.git_status({
+    -- In the review screen, Vim's half-page scroll keys belong to the diff.
+    -- Snacks normally assigns them to the file list, which can unexpectedly
+    -- change the selected file while someone is reading the preview.
+    actions = {
+      review_wheel_down = function(picker) scroll_diff(picker, false) end,
+      review_wheel_up = function(picker) scroll_diff(picker, true) end,
+    },
+    win = {
+      input = {
+        keys = {
+          ["<C-d>"] = { "preview_scroll_down", mode = { "i", "n" } },
+          ["<C-u>"] = { "preview_scroll_up", mode = { "i", "n" } },
+          ["<ScrollWheelDown>"] = { "review_wheel_down", mode = { "i", "n" } },
+          ["<ScrollWheelUp>"] = { "review_wheel_up", mode = { "i", "n" } },
+        },
+      },
+      list = {
+        keys = {
+          ["<C-d>"] = "preview_scroll_down",
+          ["<C-u>"] = "preview_scroll_up",
+          ["<ScrollWheelDown>"] = "review_wheel_down",
+          ["<ScrollWheelUp>"] = "review_wheel_up",
+        },
+      },
+      preview = {
+        keys = {
+          ["<C-d>"] = "preview_scroll_down",
+          ["<C-u>"] = "preview_scroll_up",
+          ["<ScrollWheelDown>"] = "review_wheel_down",
+          ["<ScrollWheelUp>"] = "review_wheel_up",
+        },
+      },
+    },
+    layout = {
+      layout = {
+        box = "horizontal",
+        width = 0.95,
+        height = 0.92,
+        {
+          box = "vertical",
+          border = true,
+          title = " Changed files ",
+          width = 0.35,
+          { win = "input", height = 1, border = "bottom" },
+          { win = "list", border = "none" },
+        },
+        {
+          win = "preview",
+          title = " Diff ",
+          border = true,
+        },
+      },
+    },
+  })
 end
 
 return {
@@ -35,25 +112,11 @@ return {
     },
   },
   {
-    "sindrets/diffview.nvim",
-    cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewFileHistory", "DiffviewToggleFiles", "DiffviewFocusFiles" },
-    dependencies = { "nvim-lua/plenary.nvim", "echasnovski/mini.icons" },
-    opts = {
-      enhanced_diff_hl = true,
-      view = { merge_tool = { layout = "diff3_mixed" } },
-    },
-    keys = {
-      { "<leader>gd", "<cmd>DiffviewOpen<CR>", desc = "Review repository diff" },
-      { "<leader>gc", "<cmd>DiffviewClose<CR>", desc = "Close diff review" },
-      { "<leader>gh", "<cmd>DiffviewFileHistory %<CR>", desc = "Current file history" },
-      { "<leader>gH", "<cmd>DiffviewFileHistory<CR>", desc = "Repository history" },
-    },
-  },
-  {
     "folke/snacks.nvim",
     keys = {
-      { "<leader>gg", lazygit, desc = "Lazygit popup" },
-      { "<leader>gf", function() Snacks.picker.git_status() end, desc = "Changed files" },
+      { "<leader>gg", review_changes, desc = "Review changes" },
+      { "<leader>gG", lazygit, desc = "Lazygit actions" },
+      { "<leader>gf", review_changes, desc = "Changed files" },
       { "<leader>gl", function() Snacks.picker.git_log() end, desc = "Git log" },
     },
   },

@@ -7,6 +7,15 @@ return {
       style = "storm",
       transparent = false,
       styles = { comments = { italic = true }, keywords = { italic = false } },
+      on_highlights = function(highlights, colors)
+        -- High-contrast unified diffs inspired by GitHub's dark review UI.
+        -- Snacks' Git status preview combines these backgrounds with the
+        -- source file's Tree-sitter highlighting.
+        highlights.DiffAdd = { bg = "#173d24" }
+        highlights.DiffDelete = { bg = "#4a2025" }
+        highlights.DiffChange = { bg = colors.bg_float }
+        highlights.DiffText = { bg = "#285d36" }
+      end,
     },
     config = function(_, opts)
       require("tokyonight").setup(opts)
