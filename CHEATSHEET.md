@@ -27,6 +27,8 @@ Press `<Space> /` or `<Space> ?` in Neovim at any time for the live shortcut men
 | `<Space> c d` | Full diagnostic message at the cursor |
 | `<Space> x x` | All workspace diagnostics |
 
+In the `Cmd-P` file picker, press `Enter` to reuse the current window or `Ctrl-T` to open the selected file in a new tab.
+
 Put the cursor on flagged code and press `Cmd-.` from Normal or Insert mode; choose a fix with `Up` / `Down` and apply it with `Enter`. Nothing changes until you press `Enter`; `Esc` closes the list. Only fixes offered by the attached language server appear, so some diagnostics report `No code actions available`. Use `<Space> c a` when you deliberately want broader refactors too. Kitty translates `Cmd-P`, `Cmd-Shift-F`, and `Cmd-.` into terminal-safe keys. The leader alternatives work in every terminal.
 
 ## Complete code
