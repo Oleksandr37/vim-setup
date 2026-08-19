@@ -257,7 +257,10 @@ before_x="${cursor_before%,*}"
 before_y="${cursor_before#*,}"
 after_x="${cursor_after%,*}"
 after_y="${cursor_after#*,}"
-[[ "$before_x" -gt 60 && "$after_x" -eq "$before_x" ]] || {
+# Scrolling may move the cursor to keep it inside the preview's viewport, so
+# its exact column can change. Both coordinates must remain in the right-hand
+# diff region; the file list occupies the left side of this fixed test layout.
+[[ "$before_x" -gt 60 && "$after_x" -gt 60 ]] || {
   printf 'Mouse-wheel scrolling moved focus out of the diff (%s -> %s).\n' "$cursor_before" "$cursor_after" >&2
   exit 1
 }
@@ -274,7 +277,7 @@ for _ in {1..12}; do
 done
 wait_for_pane_change "$review_before_repeated_wheel" "repeated Diff wheel scrolling"
 cursor_repeated="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" display-message -p -t "$lazygit_pane" '#{cursor_x},#{cursor_y}')"
-[[ "${cursor_repeated%,*}" -eq "$before_x" ]] || {
+[[ "${cursor_repeated%,*}" -gt 60 ]] || {
   printf 'Repeated mouse-wheel scrolling moved focus out of the diff (%s -> %s).\n' "$cursor_before" "$cursor_repeated" >&2
   exit 1
 }
