@@ -1,0 +1,40 @@
+name: Publish signed release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a signed release tag from the trusted key
+        run: git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=security/release-signers verify-tag "$GITHUB_REF_NAME"
+      - name: Require the release commit to be on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "${GITHUB_REF_NAME}^{commit}" origin/main
+      - name: Require VERSION to match the tag
+        run: test "v$(tr -d '[:space:]' < VERSION)" = "$GITHUB_REF_NAME"
+      - name: Install test dependencies
+        run: brew bundle --no-upgrade --file Brewfile.ci
+      - name: Verify the release
+        run: |
+          ./scripts/check.sh
+          ./scripts/release-smoke.sh
+          ./scripts/update-smoke.sh
+          ./scripts/smoke.sh
+          ./scripts/workspace-smoke.sh
+          ./scripts/e2e.sh
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Workon $GITHUB_REF_NAME"
