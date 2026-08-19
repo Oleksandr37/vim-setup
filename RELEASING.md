@@ -27,15 +27,26 @@ the repository or GitHub Actions.
 ## Release procedure
 
 1. Change `VERSION` in a pull request and describe the user-visible changes.
-2. Wait for `Workon CI / verify` and the required owner approval, then merge.
-3. Update the protected local `main` with `git pull --ff-only`.
-4. Create, locally verify, and push the signed tag with one command:
+2. Push the branch and ask GitHub Actions to open the pull request, so the
+   repository owner can provide GitHub's required code-owner approval:
+
+   ```bash
+   git push -u origin HEAD
+   gh workflow run create-pr.yml \
+     -f head="$(git branch --show-current)" \
+     -f title="Release Workon 0.2.0"
+   ```
+
+3. Wait for `Workon CI / verify` and the required owner approval, then merge.
+4. Update the protected local `main` with `git pull --ff-only`.
+5. Create, locally verify, and push the signed tag with one command:
 
    ```bash
    ./scripts/release.sh 0.2.0
    ```
 
-The workflow verifies the signature, ancestry, version, and tests before
-creating the GitHub release. Do not create a release manually. GitHub immutable
-releases must be enabled in repository settings before the first production
-release.
+The workflow verifies the signature, ancestry, version, and tests, then waits
+for the repository owner's approval in the protected `release` environment
+before creating the GitHub release. Do not create a release manually. GitHub
+immutable releases must be enabled in repository settings before the first
+production release.
