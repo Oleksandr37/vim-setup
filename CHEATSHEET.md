@@ -56,7 +56,7 @@ Diagnostics and completions are separate LSP features. If `Cmd-.` reports no aut
 | `<Space> g b` | Blame current line |
 | `<Space> g l` | Git log picker |
 
-In the review picker, type to filter the changed-file list, use `Up` / `Down` to select a file, `Ctrl-D` / `Ctrl-U` to scroll the diff by half-pages, `Enter` to open it, `Tab` to stage or unstage it, and `Esc` to close. The mouse wheel scrolls the diff smoothly without moving focus between panes. The preview keeps source-language syntax colors while applying clear green and red diff backgrounds.
+In Diff, scrolling or using `Up` / `Down` only moves the file-tree highlight. Click a file or press `Enter` to display its diff explicitly. Click the diff, then use `Ctrl-D` / `Ctrl-U` or the mouse wheel to read it. `[c` / `]c` moves between changed hunks, `t` toggles inline and side-by-side layouts, `o` opens the file for editing, `Tab` stages or unstages it, and `Esc` or `q` closes the review. The diff keeps source-language syntax colors while applying clear line- and character-level green/red backgrounds.
 
 Inside Lazygit, `Tab` / `Shift-Tab` move among panels, `Space` stages the selected file or hunk, and `Enter` inspects. In the Files panel, select an actual file (not its parent folder) and press `e` to return to that file in Neovim with LSP support. `?` shows Lazygit's shortcuts, and `q` closes Lazygit (`Esc` only cancels an open dialog).
 

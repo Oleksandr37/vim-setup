@@ -180,105 +180,184 @@ wait_for_code_action_picker() {
   return 1
 }
 
-wait_for_pane_change() {
-  local previous="$1"
-  local label="$2"
+code_diff_file() {
+  local field="$1"
+  case "$field" in
+    selected)
+      nvim --server "$nvim_socket" --remote-expr \
+        "luaeval('(function() local e=require(\"codediff.ui.lifecycle\").get_explorer(vim.api.nvim_get_current_tabpage()); return e and e.current_file_path or \"\" end)()')" \
+        2>/dev/null || true
+      ;;
+    cursor)
+      nvim --server "$nvim_socket" --remote-expr \
+        "luaeval('(function() local e=require(\"codediff.ui.lifecycle\").get_explorer(vim.api.nvim_get_current_tabpage()); if not e then return \"\" end; return vim.api.nvim_win_call(e.split.winid, function() local n=e.tree:get_node(); local d=n and n.data or nil; return d and d.type ~= \"group\" and d.type ~= \"directory\" and d.path or \"\" end) end)()')" \
+        2>/dev/null || true
+      ;;
+    *) printf 'Unknown CodeDiff file field: %s\n' "$field" >&2; return 2 ;;
+  esac
+}
+
+wait_for_code_diff_file() {
+  local field="$1"
+  local expected="$2"
+  local label="$3"
+  local actual=""
   local attempts=0
   for delay in "${readiness_backoff[@]}"; do
     attempts=$((attempts + 1))
-    ready_capture="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" capture-pane -p -t "$lazygit_pane" 2>/dev/null || true)"
-    if [[ "$ready_capture" != "$previous" ]]; then
+    actual="$(code_diff_file "$field")"
+    if [[ "$actual" == "$expected" ]]; then
       return 0
     fi
     sleep "$delay"
   done
-  printf 'Timed out waiting for %s after %d readiness checks.\n' "$label" "$attempts" >&2
+  printf 'Timed out waiting for %s after %d readiness checks; expected=%q actual=%q.\n' \
+    "$label" "$attempts" "$expected" "$actual" >&2
   return 1
 }
 
-wait_for_cursor() {
-  local previous="${1:-}"
-  local label="$2"
+move_to_another_code_diff_file() {
+  local previous="$1"
+  local actual=""
   local attempts=0
-  local cursor_x
-  for delay in "${readiness_backoff[@]}"; do
+  nvim --server "$nvim_socket" --remote-expr \
+    "luaeval('(function() local e=require(\"codediff.ui.lifecycle\").get_explorer(vim.api.nvim_get_current_tabpage()); if e then vim.api.nvim_set_current_win(e.split.winid) end return true end)()')" \
+    >/dev/null
+  TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" g g
+  for _ in {1..12}; do
     attempts=$((attempts + 1))
-    ready_cursor="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" display-message -p -t "$lazygit_pane" '#{cursor_x},#{cursor_y}')"
-    cursor_x="${ready_cursor%,*}"
-    if [[ "$cursor_x" -gt 60 && ( -z "$previous" || "$ready_cursor" != "$previous" ) ]]; then
+    TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" Down
+    actual="$(code_diff_file cursor)"
+    if [[ -n "$actual" && "$actual" != "$previous" ]]; then
+      ready_code_diff_file="$actual"
       return 0
     fi
-    sleep "$delay"
   done
-  printf 'Timed out waiting for %s after %d readiness checks; cursor=%s.\n' \
-    "$label" "$attempts" "$ready_cursor" >&2
+  printf 'CodeDiff cursor did not reach another file after %d moves; file=%q.\n' \
+    "$attempts" "$actual" >&2
   return 1
+}
+
+code_diff_cursor_position() {
+  nvim --server "$nvim_socket" --remote-expr \
+    "luaeval('(function() local e=require(\"codediff.ui.lifecycle\").get_explorer(vim.api.nvim_get_current_tabpage()); if not e then return \"\" end; vim.api.nvim_set_current_win(e.split.winid); return vim.fn.screencol() .. \",\" .. vim.fn.screenrow() end)()')" \
+    2>/dev/null
+}
+
+code_diff_explorer_mapping() {
+  local key="$1"
+  nvim --server "$nvim_socket" --remote-expr \
+    "luaeval('(function() local e=require(\"codediff.ui.lifecycle\").get_explorer(vim.api.nvim_get_current_tabpage()); if not e then return \"\" end; return vim.api.nvim_win_call(e.split.winid, function() return (vim.fn.maparg(\"$key\", \"n\", false, true) or {}).rhs or \"\" end) end)()')" \
+    2>/dev/null || true
+}
+
+code_diff_filetype() {
+  nvim --server "$nvim_socket" --remote-expr \
+    "luaeval('(function() local _, b=require(\"codediff.ui.lifecycle\").get_buffers(vim.api.nvim_get_current_tabpage()); return b and vim.bo[b].filetype or \"\" end)()')" \
+    2>/dev/null || true
+}
+
+code_diff_has_treesitter() {
+  nvim --server "$nvim_socket" --remote-expr \
+    "luaeval('(function() local _, b=require(\"codediff.ui.lifecycle\").get_buffers(vim.api.nvim_get_current_tabpage()); return b and vim.treesitter.highlighter.active[b] ~= nil or false end)()')" \
+    2>/dev/null || true
 }
 
 wait_for_pane "README.md" "Neovim startup"
+[[ "$(nvim --server "$nvim_socket" --remote-expr "luaeval('vim.env.VSCODE_DIFF_NO_AUTO_INSTALL')")" == "1" ]] || {
+  printf 'CodeDiff automatic release-binary downloads are not disabled.\n' >&2
+  exit 1
+}
 TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" Space g g
-wait_for_pane "Diff" "the changed-files review"
-wait_for_pane "enabled: false" "the first changed-file preview"
+wait_for_pane "Changes" "the CodeDiff changed-files review"
+
+initial_selected_file=""
+for delay in "${readiness_backoff[@]}"; do
+  initial_selected_file="$(code_diff_file selected)"
+  if [[ -n "$initial_selected_file" ]]; then
+    break
+  fi
+  sleep "$delay"
+done
+[[ -n "$initial_selected_file" ]] || {
+  printf 'CodeDiff did not select an initial changed file.\n' >&2
+  exit 1
+}
+
+if [[ "$initial_selected_file" == "config.yaml" ]]; then
+  wait_for_pane "enabled: false" "the first CodeDiff document"
+else
+  wait_for_pane "console.warn" "the first CodeDiff document"
+fi
 colored_review="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" capture-pane -p -e -t "$lazygit_pane")"
+[[ "$colored_review" == *" Diff "* && "$colored_review" != *"CodeDiff Explorer"* ]] || {
+  printf 'The review surface leaked CodeDiff internal names instead of displaying Diff.\n' >&2
+  exit 1
+}
 [[ "$colored_review" == *"48;2;23;61;36"* ]] || {
-  printf 'The review preview did not render the configured green addition background.\n' >&2
+  printf 'CodeDiff did not render the configured green addition background.\n' >&2
   exit 1
 }
 [[ "$colored_review" == *"48;2;74;32;37"* ]] || {
-  printf 'The review preview did not render the configured red deletion background.\n' >&2
+  printf 'CodeDiff did not render the configured red deletion background.\n' >&2
   exit 1
 }
 
-# Ctrl-D is a normal Vim reading key. In Snacks' defaults it scrolls the file
-# list, so this catches the regression where reading a diff selects another
-# file and replaces the document under review.
-review_before_scroll="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" capture-pane -p -t "$lazygit_pane")"
-TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" C-d
-wait_for_pane_change "$review_before_scroll" "Ctrl-D diff scrolling"
-scrolled_review="$ready_capture"
-[[ "$scrolled_review" == *"feature_"* && "$scrolled_review" == *": false"* ]] || {
-  printf 'Ctrl-D changed the selected file instead of scrolling the diff.\n' >&2
+# CodeDiff owns this interaction: passive movement in its tree must not replace
+# the document. Enter and our configured single click are the explicit choices.
+move_to_another_code_diff_file "$initial_selected_file"
+enter_target="$ready_code_diff_file"
+[[ "$(code_diff_file selected)" == "$initial_selected_file" ]] || {
+  printf 'Moving through CodeDiff files replaced the document without selection.\n' >&2
   exit 1
 }
 
-# Reproduce the mouse path used during review: click the diff, then scroll it.
-# One wheel tick should use Neovim's three-line mousescroll setting rather
-# than Snacks' much larger half-page preview action, and focus must stay right.
-TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -H -t "$lazygit_pane" \
-  1b 5b 3c 30 3b 31 30 30 3b 32 35 4d 1b 5b 3c 30 3b 31 30 30 3b 32 35 6d
-wait_for_cursor "" "Diff focus after click"
-cursor_before="$ready_cursor"
-TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -H -t "$lazygit_pane" \
-  1b 5b 3c 36 35 3b 31 30 30 3b 32 35 4d
-wait_for_cursor "$cursor_before" "smooth Diff wheel scrolling"
-cursor_after="$ready_cursor"
+TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" Enter
+wait_for_code_diff_file selected "$enter_target" "Enter-selected CodeDiff document"
 
-before_x="${cursor_before%,*}"
-before_y="${cursor_before#*,}"
-after_x="${cursor_after%,*}"
-after_y="${cursor_after#*,}"
-# Scrolling may move the cursor to keep it inside the preview's viewport, so
-# its exact column can change. Both coordinates must remain in the right-hand
-# diff region; the file list occupies the left side of this fixed test layout.
-[[ "$before_x" -gt 60 && "$after_x" -gt 60 ]] || {
-  printf 'Mouse-wheel scrolling moved focus out of the diff (%s -> %s).\n' "$cursor_before" "$cursor_after" >&2
+move_to_another_code_diff_file "$enter_target"
+click_target="$ready_code_diff_file"
+[[ "$(code_diff_file selected)" == "$enter_target" ]] || {
+  printf 'Passive CodeDiff navigation changed the Enter-selected document.\n' >&2
   exit 1
 }
-wheel_delta=$((before_y - after_y))
-[[ "$wheel_delta" -ge 0 && "$wheel_delta" -le 3 ]] || {
-  printf 'One mouse-wheel tick moved too aggressively (%s -> %s).\n' "$cursor_before" "$cursor_after" >&2
+IFS=, read -r list_mouse_x list_mouse_y <<<"$(code_diff_cursor_position)"
+
+# Store a different row's screen coordinates, then move away from it. This
+# catches a false-positive where a mouse mapping selects only the old cursor
+# row instead of the row actually clicked.
+TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" g g
+[[ "$(code_diff_file cursor)" != "$click_target" ]] || {
+  printf 'Could not move away from the CodeDiff mouse target before clicking it.\n' >&2
   exit 1
 }
+printf -v list_click_event '\033[<0;%d;%dM\033[<0;%d;%dm' \
+  "$list_mouse_x" "$list_mouse_y" "$list_mouse_x" "$list_mouse_y"
+TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -l -t "$lazygit_pane" "$list_click_event"
+wait_for_code_diff_file selected "$click_target" "mouse-selected CodeDiff document"
 
-review_before_repeated_wheel="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" capture-pane -p -t "$lazygit_pane")"
-for _ in {1..12}; do
-  TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -H -t "$lazygit_pane" \
-    1b 5b 3c 36 35 3b 31 30 30 3b 32 35 4d
+for horizontal_key in '<ScrollWheelLeft>' '<ScrollWheelRight>' '<S-ScrollWheelUp>' '<S-ScrollWheelDown>'; do
+  [[ "$(code_diff_explorer_mapping "$horizontal_key")" == "<Nop>" ]] || {
+    printf 'CodeDiff explorer does not suppress horizontal gesture %s.\n' "$horizontal_key" >&2
+    exit 1
+  }
 done
-wait_for_pane_change "$review_before_repeated_wheel" "repeated Diff wheel scrolling"
-cursor_repeated="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" display-message -p -t "$lazygit_pane" '#{cursor_x},#{cursor_y}')"
-[[ "${cursor_repeated%,*}" -gt 60 ]] || {
-  printf 'Repeated mouse-wheel scrolling moved focus out of the diff (%s -> %s).\n' "$cursor_before" "$cursor_repeated" >&2
+
+expected_diff_filetype="yaml"
+if [[ "$click_target" == *.ts ]]; then
+  expected_diff_filetype="typescript"
+fi
+actual_diff_filetype=""
+for delay in "${readiness_backoff[@]}"; do
+  actual_diff_filetype="$(code_diff_filetype)"
+  if [[ "$actual_diff_filetype" == "$expected_diff_filetype" && "$(code_diff_has_treesitter)" == "true" ]]; then
+    break
+  fi
+  sleep "$delay"
+done
+[[ "$actual_diff_filetype" == "$expected_diff_filetype" && "$(code_diff_has_treesitter)" == "true" ]] || {
+  printf 'CodeDiff did not preserve Tree-sitter syntax for %s; filetype=%q.\n' \
+    "$click_target" "$actual_diff_filetype" >&2
   exit 1
 }
 

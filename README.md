@@ -90,7 +90,9 @@ Long-running services use their own persistent terminal tabs. Press `<Space> r v
 
 ## Review agent changes
 
-Press `<Space> g g` in Neovim for the primary review surface: changed files on the left and one unified diff on the right. Added and removed lines have distinct green/red backgrounds while the code retains its source-language syntax highlighting. Type to filter files, use `Up` / `Down` to move, `Ctrl-D` / `Ctrl-U` for half-page diff scrolling, or the mouse wheel for smooth diff scrolling without changing focus. `Enter` opens the selected file, `Tab` stages or unstages it, and `Esc` closes the review.
+Press `<Space> g g` in Neovim for the Diff review surface: changed files on the left and one unified diff on the right. Added and removed lines have distinct green/red backgrounds, character-level changes, and source-language syntax highlighting. Scrolling or moving through the file tree only moves its highlight; the displayed diff changes only when you click a file or press `Enter`.
+
+Click the diff before using `Ctrl-D` / `Ctrl-U` or the mouse wheel to read it. Use `[c` / `]c` for changed hunks, `t` to toggle inline and side-by-side layouts, `o` to open the file for editing, `Tab` to stage or unstage it, and `Esc` or `q` to close the review. The plugin is pinned in `lazy-lock.json` and its native diff library is compiled locally from that pinned source during installation rather than downloaded as an unverified release binary.
 
 Press `<Space> g G` in Neovim or `Ctrl-B g` anywhere in tmux when you need Lazygit's staging, commit, branch, stash, or rebase operations. In Lazygit's Files panel, select an actual file rather than its parent directory and press `e` to open it in Neovim. Press `q` to leave Lazygit; `Esc` only cancels its current dialog.
 
@@ -138,7 +140,7 @@ These files are loaded last and remain outside the repository.
 - `./scripts/keymap-audit.sh` rejects duplicate or cross-layer shortcut conflicts and exercises the live shortcut menu keys.
 - `./scripts/smoke.sh` installs into temporary XDG directories and verifies startup without touching your live config.
 - `./scripts/workspace-smoke.sh` creates a disposable tmux server and verifies local per-window repo lists, shared persistent workspaces, fixed-pane terminal/agent decks, services, and runner isolation.
-- `./scripts/e2e.sh` opens a temporary project and exercises Markdown, Tree-sitter, shortcuts, search, syntax-colored diff rendering, images, and real terminal-driven completion acceptance with both `Enter` and `Tab`.
+- `./scripts/e2e.sh` opens a temporary project and exercises Markdown, Tree-sitter, shortcuts, search, CodeDiff rendering and explicit file selection, images, and real terminal-driven completion acceptance with both `Enter` and `Tab`.
 - `./scripts/lsp-completion-matrix.sh all` runs isolated, language-specific LSP completion probes. Pass one case such as `python` or `terraform` for a targeted CI/debug run.
 
 See [CHEATSHEET.md](CHEATSHEET.md) for the small set of shortcuts worth learning first.

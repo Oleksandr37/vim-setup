@@ -2,7 +2,7 @@
 set -uo pipefail
 
 failures=0
-checks=(nvim tmux kitty workon git rg fd fzf lazygit magick tree-sitter node npm python3)
+checks=(nvim tmux kitty workon git cc rg fd fzf lazygit magick tree-sitter node npm python3)
 optional_checks=(terraform docker)
 
 printf 'vim-setup doctor\n\n'
