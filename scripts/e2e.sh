@@ -9,7 +9,13 @@ nvim_socket="$test_root/nvim.sock"
 
 cleanup() {
   TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" kill-server >/dev/null 2>&1 || true
-  rm -rf "$test_root"
+  for delay in 0.02 0.04 0.08 0.16 0.32 0.5 0.5 0.5; do
+    if ! nvim --server "$nvim_socket" --remote-expr '1' >/dev/null 2>&1; then
+      break
+    fi
+    sleep "$delay"
+  done
+  rm -rf "$test_root" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -32,10 +38,33 @@ magick "$fixture/assets/icon.svg" "$image_output"
 [[ -s "$image_output" ]] || { printf 'ImageMagick did not render the SVG fixture.\n' >&2; exit 1; }
 
 export XDG_CONFIG_HOME="$repo_root/config"
+export XDG_DATA_HOME="$test_root/data"
+export XDG_STATE_HOME="$test_root/state"
+export XDG_CACHE_HOME="$test_root/cache"
 export VIM_SETUP_TESTING=1
 export VIM_SETUP_E2E_LSP="${VIM_SETUP_E2E_LSP:-0}"
 export VIM_SETUP_E2E_ROOT="$fixture"
 export VIM_SETUP_REPO_ROOT="$repo_root"
+
+prepare_nvim() {
+  local output status
+  set +e
+  output="$(nvim --headless "$@" +qa 2>&1)"
+  status=$?
+  set -e
+  if [[ $status -ne 0 ]] || grep -Eiq \
+    'Error detected|E5113:|E492:|vim\.schedule callback|stack traceback|attempt to call method|Error executing' \
+    <<<"$output"; then
+    printf '%s\n' "$output" >&2
+    printf 'Could not prepare the isolated Neovim E2E runtime.\n' >&2
+    exit 1
+  fi
+}
+
+prepare_nvim "+Lazy! restore"
+prepare_nvim "+lua require('nvim-treesitter').install({ 'markdown', 'markdown_inline', 'typescript', 'yaml' }):wait(300000)"
+prepare_nvim "+Lazy load mason-tool-installer.nvim" \
+  "+lua local wanted; for _, tool in ipairs(require('vim_setup.mason_tools')) do if tool[1] == 'typescript-language-server' then wanted = tool end end; assert(wanted, 'missing pinned TypeScript server'); local installer = require('mason-tool-installer'); installer.setup({ ensure_installed = { wanted }, run_on_start = false }); installer.check_install(false, true)"
 
 TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" new-session -d -x 180 -y 50 -c "$fixture" \
   "XDG_CONFIG_HOME='$repo_root/config' VIM_SETUP_TESTING=1 nvim --listen '$nvim_socket' README.md"
