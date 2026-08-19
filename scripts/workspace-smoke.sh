@@ -148,6 +148,7 @@ for binding in \
 done
 status_left="$(tmux -L "$server" show-option -gv status-left)"
 [[ "$status_left" == *'range=user|newterm'* && "$status_left" == *'range=user|termpick'* ]] || fail "clickable terminal controls are missing from the status bar"
+[[ "$status_left" == *'range=user|workonupdate'* ]] || fail "clickable update indicator is missing from the status bar"
 
 [[ -n "$(tmux -L "$server" list-windows -t "$decks" -F '#{window_id}' 2>/dev/null)" ]] || fail "persistent deck storage was not created"
 

@@ -2,26 +2,22 @@
 set -euo pipefail
 
 repo_url="https://github.com/Oleksandr37/vim-setup.git"
-install_root="${VIM_SETUP_HOME:-$HOME/.local/share/vim-setup}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd -P || true)"
 
-# When invoked through curl, obtain the complete repository and continue there.
+# When invoked through curl, use a disposable bootstrap checkout. The managed
+# installer then obtains and verifies the latest signed GitHub release.
 if [[ ! -f "$script_dir/Brewfile" ]]; then
-  if [[ -d "$install_root/.git" ]]; then
-    git -C "$install_root" pull --ff-only
-  elif [[ -e "$install_root" ]]; then
-    printf 'Cannot install: %s exists and is not a vim-setup checkout.\n' "$install_root" >&2
-    exit 1
-  else
-    mkdir -p "$(dirname "$install_root")"
-    git clone "$repo_url" "$install_root"
-  fi
-  exec "$install_root/install.sh" "$@"
+  bootstrap_root="$(mktemp -d "${TMPDIR:-/tmp}/workon-bootstrap.XXXXXX")"
+  trap 'rm -rf "$bootstrap_root"' EXIT
+  git clone --depth 1 -q "$repo_url" "$bootstrap_root/source"
+  "$bootstrap_root/source/install.sh" --managed "$@"
+  exit
 fi
 
 dry_run=false
 skip_packages=false
 skip_plugins=false
+managed=false
 
 usage() {
   cat <<'EOF'
@@ -30,6 +26,7 @@ Usage: ./install.sh [options]
   --dry-run        Show changes without making them
   --skip-packages  Do not install Homebrew packages
   --skip-plugins   Do not download Neovim plugins and parsers
+  --managed        Install the latest signed release (used by the bootstrap)
   -h, --help       Show this help
 EOF
 }
@@ -39,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) dry_run=true ;;
     --skip-packages) skip_packages=true ;;
     --skip-plugins) skip_plugins=true ;;
+    --managed) managed=true ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -73,11 +71,70 @@ if ! $skip_packages; then
     fi
   fi
   if command -v brew >/dev/null 2>&1; then
-    run brew bundle --file="$script_dir/Brewfile"
+    run brew bundle --no-upgrade --file="$script_dir/Brewfile"
   elif ! $dry_run; then
     printf 'Homebrew installation finished but brew is not on PATH. Reopen the shell and rerun this script.\n' >&2
     exit 1
   fi
+fi
+
+install_launch_agent() {
+  local checker_root="$HOME/.local/share/workon/checker"
+  local checker_bin="$checker_root/bin/workon-update"
+  local launch_agents="$HOME/Library/LaunchAgents"
+  local plist="$launch_agents/dev.workon.update-check.plist"
+  local temporary="$plist.tmp.$$"
+  local path_value="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  if $dry_run; then
+    printf '+ install hourly Workon update checker at %s\n' "$plist"
+    return
+  fi
+  mkdir -p "$checker_root/bin"
+  cp "$script_dir/bin/workon-update" "$checker_bin"
+  cp "$script_dir/VERSION" "$checker_root/VERSION"
+  chmod 755 "$checker_bin"
+  mkdir -p "$launch_agents"
+  cat > "$temporary" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.workon.update-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$checker_bin</string>
+    <string>check</string>
+    <string>--background</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$path_value</string>
+    <key>WORKON_BACKGROUND_CHECK</key><string>1</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$temporary" >/dev/null
+  mv -f "$temporary" "$plist"
+  if [[ "${WORKON_INSTALL_TESTING:-0}" != 1 ]]; then
+    launchctl bootout "gui/$UID" "$plist" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$UID" "$plist"
+  fi
+}
+
+if $managed; then
+  if $dry_run; then
+    printf '+ install latest verified Workon release into %s\n' "${WORKON_HOME:-$HOME/.local/share/workon}"
+  else
+    "$script_dir/bin/workon-update" install --yes
+  fi
+  install_launch_agent
+  printf '\nWorkon managed installation is ready.\n'
+  exit
 fi
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
@@ -114,6 +171,7 @@ link_path "$script_dir/config/kitty/kanagawa-dragon.conf" "$HOME/.config/kitty/k
 link_path "$script_dir/config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/vim-workspace"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/workon"
+link_path "$script_dir/bin/workon-update" "$HOME/.local/bin/workon-update"
 link_path "$script_dir/bin/vim-setup-run" "$HOME/.local/bin/vim-setup-run"
 link_path "$script_dir/bin/vim-setup-doctor" "$HOME/.local/bin/vim-setup-doctor"
 run mkdir -p "$HOME/.config/vim-setup"
@@ -134,14 +192,17 @@ fi
 
 if ! $dry_run && ! $skip_plugins; then
   printf 'Installing pinned Neovim plugins and parsers...\n'
-  nvim --headless "+Lazy! sync" +qa
+  nvim --headless "+Lazy! restore" +qa
   nvim --headless "+lua require('vim_setup.treesitter').install(300000)" +qa
   nvim --headless "+Lazy load mason-lspconfig.nvim" "+MasonToolsInstallSync" +qa
 fi
 
-if ! $dry_run && tmux -L vim-work has-session 2>/dev/null; then
-  tmux -L vim-work source-file "$HOME/.config/tmux/tmux.conf"
+tmux_socket="${VIM_SETUP_TMUX_SOCKET:-vim-work}"
+if ! $dry_run && tmux -L "$tmux_socket" has-session 2>/dev/null; then
+  tmux -L "$tmux_socket" source-file "$HOME/.config/tmux/tmux.conf"
 fi
+
+install_launch_agent
 
 if $dry_run; then
   printf '\nDry run complete; no files or packages were changed.\n'

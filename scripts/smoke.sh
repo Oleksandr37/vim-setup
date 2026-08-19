@@ -26,7 +26,8 @@ run_nvim() {
   fi
 }
 
-run_nvim "+Lazy! sync"
+run_nvim "+Lazy! restore"
 run_nvim "+lua require('nvim-treesitter').install({ 'markdown', 'markdown_inline', 'typescript' }):wait(300000)"
 run_nvim "+lua local plugins = vim.tbl_keys(require('lazy.core.config').plugins); require('lazy').load({ plugins = plugins })" "+lua print('vim-setup plugins loaded')"
+run_nvim "+luafile $repo_root/tests/update.lua"
 printf 'Neovim smoke test passed.\n'

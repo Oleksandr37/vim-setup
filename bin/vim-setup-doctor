@@ -2,7 +2,7 @@
 set -uo pipefail
 
 failures=0
-checks=(nvim tmux kitty workon git cc rg fd fzf lazygit magick tree-sitter node npm python3)
+checks=(nvim tmux kitty workon workon-update git cc rg fd fzf lazygit magick tree-sitter node npm python3)
 optional_checks=(terraform docker)
 
 printf 'vim-setup doctor\n\n'
@@ -48,6 +48,15 @@ if [[ -L "$HOME/Library/Application Support/lazygit/config.yml" ]]; then
   printf '  [ok]      Lazygit config is linked\n'
 else
   printf '  [info]    Lazygit config is not a symlink\n'
+fi
+
+if command -v workon >/dev/null 2>&1; then
+  printf '  [info]    %s\n' "$(workon version 2>/dev/null || printf 'Workon version unavailable')"
+fi
+if launchctl print "gui/$UID/dev.workon.update-check" >/dev/null 2>&1; then
+  printf '  [ok]      Hourly update checker is loaded\n'
+else
+  printf '  [info]    Hourly update checker is not loaded\n'
 fi
 
 printf '\nRun :checkhealth inside Neovim for LSP/parser details.\n'

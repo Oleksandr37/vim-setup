@@ -66,6 +66,10 @@ grep -Fq 'range=user|termpick' "$repo_root/config/tmux/tmux.conf" || {
   printf 'Clickable terminal picker is missing its tmux status range.\n' >&2
   exit 1
 }
+grep -Fq 'range=user|workonupdate' "$repo_root/config/tmux/tmux.conf" || {
+  printf 'Clickable Workon update indicator is missing its tmux status range.\n' >&2
+  exit 1
+}
 grep -Fq 'MouseDown1Status if-shell' "$repo_root/config/tmux/tmux.conf" || {
   printf 'Clickable terminal button has no mouse handler.\n' >&2
   exit 1

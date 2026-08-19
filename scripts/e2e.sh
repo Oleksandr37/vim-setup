@@ -264,6 +264,17 @@ code_diff_has_treesitter() {
 }
 
 wait_for_pane "README.md" "Neovim startup"
+registered_socket=""
+for delay in "${readiness_backoff[@]}"; do
+  registered_socket="$(TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" show-option -pqv \
+    -t "$lazygit_pane" @workon_nvim_socket 2>/dev/null || true)"
+  [[ "$registered_socket" == "$nvim_socket" ]] && break
+  sleep "$delay"
+done
+[[ "$registered_socket" == "$nvim_socket" ]] || {
+  printf 'Neovim did not register its RPC endpoint with the owning tmux pane.\n' >&2
+  exit 1
+}
 [[ "$(nvim --server "$nvim_socket" --remote-expr "luaeval('vim.env.VSCODE_DIFF_NO_AUTO_INSTALL')")" == "1" ]] || {
   printf 'CodeDiff automatic release-binary downloads are not disabled.\n' >&2
   exit 1
@@ -444,6 +455,39 @@ code_action_after="$(nvim --server "$nvim_socket" --remote-expr \
   exit 1
 }
 TMUX_TMPDIR="$test_root" tmux -L "$lazygit_server" send-keys -t "$lazygit_pane" Escape
+
+# A Workon update must never discard a modified buffer. Neovim defers its
+# native session-preserving restart until the last change is written, then the
+# same terminal UI reconnects to a fresh process automatically.
+nvim --server "$nvim_socket" --remote-expr "execute('edit! src/app.ts')" >/dev/null
+nvim --server "$nvim_socket" --remote-expr \
+  "luaeval(\"vim.api.nvim_buf_set_lines(0, -1, -1, false, {'// restart guard'}) or true\")" >/dev/null
+restart_pid_before="$(nvim --server "$nvim_socket" --remote-expr 'getpid()')"
+restart_result="$(nvim --server "$nvim_socket" --remote-expr \
+  "luaeval(\"require('vim_setup.update').request_restart(_A)\", 'v9.9.9')")"
+[[ "$restart_result" == waiting-for-save ]] || {
+  printf 'Workon update did not defer restart for a modified buffer; result=%q.\n' "$restart_result" >&2
+  exit 1
+}
+nvim --server "$nvim_socket" --remote-expr "execute('write!')" >/dev/null
+restart_pid_after="$restart_pid_before"
+restart_ready=false
+restart_attempts=0
+for delay in "${readiness_backoff[@]}"; do
+  restart_attempts=$((restart_attempts + 1))
+  restart_pid_after="$(nvim --server "$nvim_socket" --remote-expr 'getpid()' 2>/dev/null || true)"
+  if [[ "$restart_pid_after" =~ ^[0-9]+$ && "$restart_pid_after" != "$restart_pid_before" ]] && \
+      [[ "$(nvim --server "$nvim_socket" --remote-expr "exists(':WorkonRestart')" 2>/dev/null || true)" == 2 ]]; then
+    restart_ready=true
+    break
+  fi
+  sleep "$delay"
+done
+[[ "$restart_ready" == true ]] || {
+  printf 'Neovim did not automatically restart and restore its RPC endpoint after %d checks; before=%q after=%q.\n' \
+    "$restart_attempts" "$restart_pid_before" "$restart_pid_after" >&2
+  exit 1
+}
 
 set +e
 output="$(nvim --headless \
