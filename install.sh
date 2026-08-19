@@ -110,6 +110,7 @@ link_path() {
 link_path "$script_dir/config/nvim" "$HOME/.config/nvim"
 link_path "$script_dir/config/tmux/tmux.conf" "$HOME/.config/tmux/tmux.conf"
 link_path "$script_dir/config/kitty/kitty.conf" "$HOME/.config/kitty/kitty.conf"
+link_path "$script_dir/config/kitty/kanagawa-dragon.conf" "$HOME/.config/kitty/kanagawa-dragon.conf"
 link_path "$script_dir/config/lazygit/config.yml" "$HOME/Library/Application Support/lazygit/config.yml"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/vim-workspace"
 link_path "$script_dir/bin/vim-workspace" "$HOME/.local/bin/workon"

@@ -39,6 +39,11 @@ if [[ -L "$HOME/.config/kitty/kitty.conf" ]]; then
 else
   printf '  [info]    Kitty config is not a symlink\n'
 fi
+if [[ -L "$HOME/.config/kitty/kanagawa-dragon.conf" ]]; then
+  printf '  [ok]      Kitty theme is linked\n'
+else
+  printf '  [info]    Kitty theme is not a symlink\n'
+fi
 if [[ -L "$HOME/Library/Application Support/lazygit/config.yml" ]]; then
   printf '  [ok]      Lazygit config is linked\n'
 else

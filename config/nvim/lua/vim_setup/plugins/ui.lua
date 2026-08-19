@@ -1,25 +1,30 @@
 return {
   {
-    "folke/tokyonight.nvim",
+    "rebelot/kanagawa.nvim",
     lazy = false,
     priority = 1000,
     opts = {
-      style = "storm",
+      theme = "dragon",
       transparent = false,
-      styles = { comments = { italic = true }, keywords = { italic = false } },
-      on_highlights = function(highlights, colors)
-        -- High-contrast unified diffs inspired by GitHub's dark review UI.
-        -- Snacks' Git status preview combines these backgrounds with the
-        -- source file's Tree-sitter highlighting.
-        highlights.DiffAdd = { bg = "#173d24" }
-        highlights.DiffDelete = { bg = "#4a2025" }
-        highlights.DiffChange = { bg = colors.bg_float }
-        highlights.DiffText = { bg = "#285d36" }
+      terminalColors = true,
+      commentStyle = { italic = true },
+      keywordStyle = {},
+      statementStyle = { bold = false },
+      background = { dark = "dragon", light = "lotus" },
+      overrides = function()
+        -- Keep additions and deletions immediately scannable in the review
+        -- picker while preserving Tree-sitter's foreground syntax colors.
+        return {
+          DiffAdd = { bg = "#173d24" },
+          DiffDelete = { bg = "#4a2025" },
+          DiffChange = { bg = "#252535" },
+          DiffText = { bg = "#285d36" },
+        }
       end,
     },
     config = function(_, opts)
-      require("tokyonight").setup(opts)
-      vim.cmd.colorscheme("tokyonight")
+      require("kanagawa").setup(opts)
+      vim.cmd.colorscheme("kanagawa-dragon")
     end,
   },
   {
@@ -40,14 +45,40 @@ return {
     dependencies = { "echasnovski/mini.icons" },
     opts = {
       options = {
-        theme = "tokyonight",
+        theme = "kanagawa",
         globalstatus = true,
+        always_show_tabline = false,
         component_separators = { left = "│", right = "│" },
         section_separators = { left = "", right = "" },
       },
       sections = {
-        lualine_c = { { "filename", path = 1 } },
+        lualine_c = {
+          {
+            "filename",
+            path = 1,
+            fmt = function(name)
+              return vim.bo.filetype == "codediff-explorer" and "Diff" or name
+            end,
+          },
+        },
         lualine_x = { "diagnostics", "diff", "encoding", "filetype" },
+      },
+      tabline = {
+        lualine_a = {
+          {
+            "tabs",
+            mode = 1,
+            path = 0,
+            fmt = function(name, tab)
+              return tab.filetype == "codediff-explorer" and "Diff" or name
+            end,
+          },
+        },
+        lualine_b = {},
+        lualine_c = {},
+        lualine_x = {},
+        lualine_y = {},
+        lualine_z = {},
       },
     },
   },

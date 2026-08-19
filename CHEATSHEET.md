@@ -95,6 +95,7 @@ Opening a PNG or SVG file displays the asset directly in Kitty. Image links in M
 - `<Space> w H/J/K/L` resizes a Neovim split.
 - `Ctrl-B H/J/K/L` resizes a tmux pane; dragging a border works too.
 - Mouse-wheel scroll enters tmux history. Keyboard alternative: `Ctrl-B [` then `Ctrl-U` / `Ctrl-D`; press `q` to leave.
+- `Cmd-click` opens a visible URL, including inside tmux/Neovim. `Cmd-Shift-U` opens a keyboard URL picker.
 - `Ctrl-B g` opens Lazygit directly from tmux.
 - `Ctrl-B d` detaches without stopping anything; `workon .` returns to an unattached matching window.
 - Shift-Enter sends the terminal newline key used by agent chat composers through the shared Kitty mapping.

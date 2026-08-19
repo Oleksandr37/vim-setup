@@ -23,7 +23,7 @@ vim.opt.rtp:prepend(lazypath)
 
 require("lazy").setup({ { import = "vim_setup.plugins" } }, {
   defaults = { lazy = true },
-  install = { colorscheme = { "tokyonight", "habamax" } },
+  install = { colorscheme = { "kanagawa-dragon", "habamax" } },
   change_detection = { notify = false },
   checker = { enabled = false },
   ui = { border = "rounded" },

@@ -3,14 +3,14 @@ gui:
   sidePanelWidth: 0.3
   theme:
     activeBorderColor:
-      - "#7aa2f7"
+      - "#8ba4b0"
       - bold
     inactiveBorderColor:
-      - "#565f89"
+      - "#625e5a"
     optionsTextColor:
-      - "#7aa2f7"
+      - "#8ba4b0"
     selectedLineBgColor:
-      - "#292e42"
+      - "#282727"
 os:
   # When Lazygit runs in our Neovim popup, open the selected file in the
   # existing Neovim instance instead of attempting an unsupported nested one.

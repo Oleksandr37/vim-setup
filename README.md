@@ -60,6 +60,8 @@ When `workon` is invoked by an agent or macOS automation without an attached TTY
 
 Pane sizes start as percentages, so they adapt to laptop and external-monitor dimensions. Drag borders with the mouse, or press `Ctrl-B` followed by repeated `H`, `J`, `K`, or `L`.
 
+Kanagawa Dragon provides one muted, low-brightness palette across Kitty, tmux, Neovim, and Lazygit. In terminal output, hold `Cmd` and click a detected URL to open it. If a link is difficult to target, press `Cmd-Shift-U`; Kitty labels every visible URL so you can choose one from the keyboard.
+
 ## Project tasks (the launch.json replacement)
 
 Press `F5` or `<Space> r r`. For JavaScript projects, `dev`, `start`, and other package scripts are detected automatically. Make, Just, Docker Compose, and Terraform projects receive useful defaults too.

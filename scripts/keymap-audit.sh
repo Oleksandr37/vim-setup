@@ -80,6 +80,21 @@ if [[ -n "$invalid_kitty" ]]; then
   exit 1
 fi
 
+# Cmd-click must still reach Kitty when tmux or Neovim has grabbed the mouse.
+# Keep a keyboard picker as a reliable fallback for awkward/long links.
+grep -Fxq 'mouse_map cmd+left press grabbed discard_event' "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Cmd-click does not discard the application-grabbed mouse press.\n' >&2
+  exit 1
+}
+grep -Fxq 'mouse_map cmd+left release grabbed,ungrabbed mouse_handle_click link' "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Cmd-click is not mapped to open detected links through grabbed mouse mode.\n' >&2
+  exit 1
+}
+grep -Fxq 'map cmd+shift+u open_url_with_hints' "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Kitty URL-hints fallback is missing.\n' >&2
+  exit 1
+}
+
 # Cmd-. uses a function key only as a cross-application transport. Keep this
 # exact so a future Kitty or tmux edit cannot silently break quick fixes.
 grep -Fxq 'map cmd+. send_key f13' "$repo_root/config/kitty/kitty.conf" || {
@@ -98,6 +113,25 @@ if rg -q '(^|[[:space:]])F13([[:space:]]|$)' "$repo_root/config/tmux/tmux.conf";
   printf 'tmux consumes F13, which is reserved for the Cmd-. code-action transport.\n' >&2
   exit 1
 fi
+
+# The four visible layers should use one named palette instead of drifting into
+# independently chosen colors over time.
+grep -Fxq 'include kanagawa-dragon.conf' "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Kitty is not using the shared Kanagawa Dragon palette.\n' >&2
+  exit 1
+}
+grep -Fq 'config/kitty/kanagawa-dragon.conf' "$repo_root/install.sh" || {
+  printf "The installer does not link Kitty's included Kanagawa Dragon palette.\n" >&2
+  exit 1
+}
+grep -Fq 'vim.cmd.colorscheme("kanagawa-dragon")' "$repo_root/config/nvim/lua/vim_setup/plugins/ui.lua" || {
+  printf 'Neovim is not using Kanagawa Dragon.\n' >&2
+  exit 1
+}
+grep -Fq '# Compact Kanagawa Dragon status line.' "$repo_root/config/tmux/tmux.conf" || {
+  printf 'tmux is not marked as using the shared Kanagawa Dragon palette.\n' >&2
+  exit 1
+}
 
 TMUX_TMPDIR="$tmp_root" tmux -L "$server" -f "$repo_root/config/tmux/tmux.conf" new-session -d
 prefix="$(TMUX_TMPDIR="$tmp_root" tmux -L "$server" show-options -gv prefix)"
