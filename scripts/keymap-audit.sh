@@ -174,15 +174,16 @@ tmux_test() {
 
 link_target="https://example.com/workon/wrapped/hyperlink/abcdefghijklmnopqrstuvwxyz0123456789"
 link_label="OPEN-LINK-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
-tmux_test resize-window -x 34 -y 10
-tmux_test send-keys -t :1 -l "printf '\\033]8;;${link_target}\\033\\\\${link_label}\\033]8;;\\033\\\\\\n'"
-tmux_test send-keys -t :1 Enter
+tmux_test new-window -d -n hyperlink-test
+tmux_test resize-window -t :hyperlink-test -x 34 -y 10
+tmux_test send-keys -t :hyperlink-test -l "printf '\\033]8;;${link_target}\\033\\\\${link_label}\\033]8;;\\033\\\\\\n'"
+tmux_test send-keys -t :hyperlink-test Enter
 
 link_ready=false
 link_attempts=0
 for delay in "${readiness_backoff[@]}"; do
   link_attempts=$((link_attempts + 1))
-  if tmux_test capture-pane -H -p -t :1 -S - -E - | grep -Fxq "$link_target"; then
+  if tmux_test capture-pane -H -p -t :hyperlink-test -S - -E - | grep -Fxq "$link_target"; then
     link_ready=true
     break
   fi
@@ -190,9 +191,10 @@ for delay in "${readiness_backoff[@]}"; do
 done
 if [[ "$link_ready" != true ]]; then
   printf 'Wrapped OSC 8 target was not preserved after %d readiness checks.\n' "$link_attempts" >&2
-  tmux_test capture-pane -e -p -t :1 -S - -E - >&2
+  tmux_test capture-pane -e -p -t :hyperlink-test -S - -E - >&2
   exit 1
 fi
+tmux_test kill-window -t :hyperlink-test
 
 tmux_test resize-window -x 140 -y 45
 tmux_test send-keys -t :1 -l "cd -- '$repo_root' && env XDG_CONFIG_HOME='$repo_root/config' VIM_SETUP_TESTING=1 nvim"
