@@ -11,6 +11,10 @@ export TMUX_TMPDIR="$socket_root"
 export VIM_SETUP_TMUX_SOCKET="$server"
 export VIM_SETUP_EDITOR_COMMAND=:
 export VIM_SETUP_NO_ATTACH=1
+# Reproduce Workon being launched from a non-interactive coding agent. Its
+# no-color policy must not leak into the persistent interactive tmux server.
+export NO_COLOR=1
+export COLORTERM=
 
 cleanup() {
   tmux -L "$server" kill-server >/dev/null 2>&1 || true
@@ -61,6 +65,12 @@ workon() {
 workon --view view-one "$repo_a" >/dev/null
 workon --view view-one "$repo_b" >/dev/null
 workon --view view-two "$repo_b" >/dev/null
+
+if tmux -L "$server" show-environment -g NO_COLOR 2>/dev/null | grep -q '^NO_COLOR='; then
+  fail "the launcher's NO_COLOR policy leaked into Workon terminals"
+fi
+[[ "$(tmux -L "$server" show-environment -g COLORTERM)" == "COLORTERM=truecolor" ]] ||
+  fail "Workon did not advertise true-color support to terminal applications"
 
 pool_roots="$(tmux -L "$server" list-windows -t "$pool" -F '#{@vim_setup_path}' | sed '/^$/d' | sort)"
 expected_roots="$(printf '%s\n%s\n' "$repo_a" "$repo_b" | sort)"
