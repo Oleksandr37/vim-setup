@@ -62,6 +62,8 @@ Pane sizes start as percentages, so they adapt to laptop and external-monitor di
 
 Kanagawa Dragon provides one muted, low-brightness palette across Kitty, tmux, Neovim, and Lazygit. In terminal output, hold `Cmd` and click a detected URL to open it. If a link is difficult to target, press `Cmd-Shift-U`; Kitty labels every visible URL so you can choose one from the keyboard.
 
+Workon terminals use a compact `directory ❯` prompt: only the current directory's basename is shown, and the arrow turns green or red for success or failure. The installer also provides zsh completion, private persistent history-based command autosuggestions, and command syntax highlighting through Homebrew packages. This layer applies only to shells created inside Workon: your normal Kitty tabs and private `~/.zshrc` remain yours. Workon sources that private startup file at runtime so existing aliases, SDK paths, and functions still work, but it never copies it into this public repository.
+
 ## Project tasks (the launch.json replacement)
 
 Press `F5` or `<Space> r r`. For JavaScript projects, `dev`, `start`, and other package scripts are detected automatically. Make, Just, Docker Compose, and Terraform projects receive useful defaults too.
@@ -146,6 +148,7 @@ These files are loaded last and remain outside the repository.
 - `./scripts/keymap-audit.sh` rejects duplicate or cross-layer shortcut conflicts and exercises the live shortcut menu keys.
 - `./scripts/smoke.sh` installs into temporary XDG directories and verifies startup without touching your live config.
 - `./scripts/workspace-smoke.sh` creates a disposable tmux server and verifies local per-window repo lists, shared persistent workspaces, fixed-pane terminal/agent decks, services, and runner isolation.
+- `./scripts/zsh-smoke.sh` uses an isolated home and PTY to verify the short prompt, preserved private startup behavior, completion, autosuggestions, and syntax highlighting.
 - `./scripts/update-smoke.sh` creates disposable signed and unsigned release repositories and verifies upgrades, rejection, atomic rollback, managed links, and the hourly LaunchAgent.
 - `./scripts/e2e.sh` opens a temporary project and exercises Markdown, Tree-sitter, shortcuts, search, CodeDiff rendering and explicit file selection, images, and real terminal-driven completion acceptance with both `Enter` and `Tab`.
 - `./scripts/lsp-completion-matrix.sh all` runs isolated, language-specific LSP completion probes. Pass one case such as `python` or `terraform` for a targeted CI/debug run.

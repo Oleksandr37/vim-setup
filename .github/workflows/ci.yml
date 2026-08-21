@@ -27,6 +27,8 @@ jobs:
       - name: Neovim smoke test
         run: ./scripts/smoke.sh
       - name: Workspace smoke test
-        run: ./scripts/workspace-smoke.sh
+        run: |
+          ./scripts/workspace-smoke.sh
+          ./scripts/zsh-smoke.sh
       - name: Full terminal end-to-end test
         run: ./scripts/e2e.sh

@@ -66,6 +66,9 @@ workon --view view-one "$repo_a" >/dev/null
 workon --view view-one "$repo_b" >/dev/null
 workon --view view-two "$repo_b" >/dev/null
 
+pool_shell_command="$(tmux -L "$server" show-option -qv -t "$pool" default-command)"
+[[ "$pool_shell_command" == *'/bin/workon-shell'* ]] || fail 'new Workon panes do not use the managed zsh layer'
+
 if tmux -L "$server" show-environment -g NO_COLOR 2>/dev/null | grep -q '^NO_COLOR='; then
   fail "the launcher's NO_COLOR policy leaked into Workon terminals"
 fi

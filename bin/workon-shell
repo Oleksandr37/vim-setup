@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  link_target="$(readlink "$script_path")"
+  if [[ "$link_target" == /* ]]; then
+    script_path="$link_target"
+  else
+    script_path="$(cd "$(dirname "$script_path")" && pwd -P)/$link_target"
+  fi
+done
+script_root="$(cd "$(dirname "$script_path")/.." && pwd -P)"
+workon_zdotdir="$script_root/config/zsh"
+user_zdotdir="${WORKON_USER_ZDOTDIR:-${ZDOTDIR:-$HOME}}"
+
+# A nested Workon shell must not recursively treat the managed startup
+# directory as the user's own zsh configuration.
+if [[ "$user_zdotdir" == "$workon_zdotdir" ]]; then
+  user_zdotdir="$HOME"
+fi
+
+export WORKON_USER_ZDOTDIR="$user_zdotdir"
+export WORKON_ZDOTDIR="$workon_zdotdir"
+export ZDOTDIR="$workon_zdotdir"
+
+exec /bin/zsh -i
