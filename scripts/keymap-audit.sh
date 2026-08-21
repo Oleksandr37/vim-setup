@@ -98,6 +98,14 @@ grep -Fxq 'map cmd+shift+u open_url_with_hints' "$repo_root/config/kitty/kitty.c
   printf 'Kitty URL-hints fallback is missing.\n' >&2
   exit 1
 }
+grep -Fxq 'allow_hyperlinks yes' "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Kitty is not configured to accept application-provided OSC 8 hyperlinks.\n' >&2
+  exit 1
+}
+grep -Fxq 'set -as terminal-features ",xterm-kitty:RGB:hyperlinks"' "$repo_root/config/tmux/tmux.conf" || {
+  printf 'tmux does not advertise OSC 8 hyperlinks to Kitty clients.\n' >&2
+  exit 1
+}
 
 # Cmd-. uses a function key only as a cross-application transport. Keep this
 # exact so a future Kitty or tmux edit cannot silently break quick fixes.
@@ -163,6 +171,28 @@ printf '%s\n' "$output"
 tmux_test() {
   TMUX_TMPDIR="$tmp_root" tmux -L "$server" "$@"
 }
+
+link_target="https://example.com/workon/wrapped/hyperlink/abcdefghijklmnopqrstuvwxyz0123456789"
+link_label="OPEN-LINK-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
+tmux_test resize-window -x 34 -y 10
+tmux_test send-keys -t :1 -l "printf '\\033]8;;${link_target}\\033\\\\${link_label}\\033]8;;\\033\\\\\\n'"
+tmux_test send-keys -t :1 Enter
+
+link_ready=false
+link_attempts=0
+for delay in "${readiness_backoff[@]}"; do
+  link_attempts=$((link_attempts + 1))
+  if tmux_test capture-pane -H -p -t :1 -S - -E - | grep -Fxq "$link_target"; then
+    link_ready=true
+    break
+  fi
+  sleep "$delay"
+done
+if [[ "$link_ready" != true ]]; then
+  printf 'Wrapped OSC 8 target was not preserved after %d readiness checks.\n' "$link_attempts" >&2
+  tmux_test capture-pane -e -p -t :1 -S - -E - >&2
+  exit 1
+fi
 
 tmux_test resize-window -x 140 -y 45
 tmux_test send-keys -t :1 -l "cd -- '$repo_root' && env XDG_CONFIG_HOME='$repo_root/config' VIM_SETUP_TESTING=1 nvim"
