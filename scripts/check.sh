@@ -20,5 +20,9 @@ if command -v jq >/dev/null 2>&1; then
   jq empty "$repo_root/.vim-setup.json" "$repo_root/examples/.vim-setup.json"
 fi
 git -C "$repo_root" diff --check
+grep -Fq -- '--repo "$GITHUB_REPOSITORY"' "$repo_root/.github/workflows/release.yml" || {
+  printf 'The checkout-free release job does not pass an explicit repository to gh.\n' >&2
+  exit 1
+}
 "$repo_root/scripts/keymap-audit.sh"
 printf 'Static checks passed.\n'
