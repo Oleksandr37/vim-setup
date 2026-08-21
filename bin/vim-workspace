@@ -40,6 +40,14 @@ tmux_cmd() {
   tmux -L "$tmux_socket" "$@"
 }
 
+configure_tmux_environment() {
+  # A non-interactive coding agent may intentionally disable color for its own
+  # output. Workon terminals are interactive, so do not persist that launcher
+  # policy in the shared tmux server.
+  tmux_cmd set-environment -gu NO_COLOR
+  tmux_cmd set-environment -g COLORTERM truecolor
+}
+
 session_exists() {
   tmux_cmd has-session -t "$1" 2>/dev/null
 }
@@ -65,6 +73,7 @@ ensure_internal_session() {
     tmux_cmd set-option -p -t "$session:$name" @vim_setup_internal 1
     tmux_cmd set-option -t "$session" status off
   fi
+  configure_tmux_environment
 }
 
 pool_window_for_root() {
