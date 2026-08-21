@@ -84,6 +84,34 @@ wait_for_pane 'WORKON_ZSH_PROBE=loaded:1:1:1:0:0' 'zsh feature probe'
 [[ ! -e "$repo_root/config/zsh/.zsh_history" ]] || fail 'shell history leaked into the public config directory'
 [[ -f "$test_home/.local/state/workon/zsh_history" ]] || fail 'private Workon history was not created'
 
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" -l \
+  'bindkey | command grep -F _workon_clear_terminal'
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" Enter
+wait_for_pane '_workon_clear_terminal' 'private terminal-clear widget'
+
+# Expanded by the isolated zsh in the pane, not by this Bash test harness.
+# shellcheck disable=SC2016
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" -l \
+  'for i in {1..80}; do print -r -- WORKON_CLEAR_MARKER_$i; done'
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" Enter
+wait_for_pane 'WORKON_CLEAR_MARKER_80' 'terminal-clear fixture'
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" Escape
+TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" -l '[5;30013~'
+
+cleared=false
+clear_attempts=0
+for delay in 0.02 0.04 0.08 0.16 0.32 0.5 0.5 0.5 0.5 0.5; do
+  clear_attempts=$((clear_attempts + 1))
+  cleared_capture="$(TMUX_TMPDIR="$socket_root" tmux -L "$server" capture-pane -p -t "$pane" -S - -E -)"
+  history_size="$(TMUX_TMPDIR="$socket_root" tmux -L "$server" display-message -p -t "$pane" '#{history_size}')"
+  if [[ "$history_size" == 0 && "$cleared_capture" != *'WORKON_CLEAR_MARKER_'* && "$cleared_capture" == *'❯'* ]]; then
+    cleared=true
+    break
+  fi
+  sleep "$delay"
+done
+[[ "$cleared" == true ]] || fail "private terminal clear was not complete after $clear_attempts bounded attempts"
+
 TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" -l 'echo workon-auto'
 wait_for_pane 'suggest-ready' 'history autosuggestion'
 TMUX_TMPDIR="$socket_root" tmux -L "$server" send-keys -t "$pane" C-c

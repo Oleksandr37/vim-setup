@@ -77,6 +77,17 @@ add-zsh-hook -d precmd _workon_prompt_precmd 2>/dev/null || true
 add-zsh-hook precmd _workon_prompt_precmd
 _workon_prompt_precmd
 
+# Cmd-K reaches interactive Workon shells through a private tmux sequence. The
+# widget clears the screen and terminal history atomically without replacing a
+# user's ordinary Ctrl-L binding or sending input to non-shell applications.
+_workon_clear_terminal() {
+  builtin print -rn -- $'\r\e[0J\e[H\e[2J\e[3J' >"$TTY"
+  zle .reset-prompt
+  zle -R
+}
+zle -N _workon_clear_terminal
+bindkey $'\e[5;30013~' _workon_clear_terminal
+
 # zsh-syntax-highlighting must be loaded after other widgets and shell setup.
 if (( ! $+functions[_zsh_highlight] )); then
   for _workon_brew_prefix in ${HOMEBREW_PREFIX:-} /opt/homebrew /usr/local; do

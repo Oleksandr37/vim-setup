@@ -37,7 +37,7 @@ if [[ -n "$duplicates" ]]; then
 fi
 
 # tmux must never consume ordinary application keystrokes without its prefix.
-# Mouse-only root-table bindings are UI click targets and do not consume keys.
+# Mouse events are UI click targets; User0 is the private Kitty Cmd-K transport.
 if awk '
   $1 == "bind" || $1 == "bind-key" {
     table = "prefix"
@@ -49,7 +49,7 @@ if awk '
       key = $i
       break
     }
-    if (table == "root" && key !~ /^Mouse/) found = 1
+    if (table == "root" && key !~ /^Mouse/ && key != "User0") found = 1
   }
   END { exit !found }
 ' \
@@ -102,6 +102,44 @@ grep -Fxq 'allow_hyperlinks yes' "$repo_root/config/kitty/kitty.conf" || {
   printf 'Kitty is not configured to accept application-provided OSC 8 hyperlinks.\n' >&2
   exit 1
 }
+grep -Fxq 'map cmd+k send_text all \x1b[5;30012~' \
+  "$repo_root/config/kitty/kitty.conf" || {
+  printf 'Cmd-K does not forward the private pane-scoped tmux transport.\n' >&2
+  exit 1
+}
+if grep -Eq '^map cmd\+k .*clear_terminal' "$repo_root/config/kitty/kitty.conf"; then
+  printf 'Cmd-K clears the entire Kitty window instead of one tmux pane.\n' >&2
+  exit 1
+fi
+grep -Fxq 'set -s user-keys[0] "\e[5;30012~"' "$repo_root/config/tmux/tmux.conf" || {
+  printf 'tmux does not define the private Cmd-K transport sequence.\n' >&2
+  exit 1
+}
+grep -Fq "bind -T root User0 clear-history -H" "$repo_root/config/tmux/tmux.conf" || {
+  printf 'tmux does not consume the reserved Cmd-K transport.\n' >&2
+  exit 1
+}
+grep -Fq "pane_current_command}}' 'send-keys -H" "$repo_root/config/tmux/tmux.conf" || {
+  printf 'Cmd-K shell clear is not guarded by the focused pane command.\n' >&2
+  exit 1
+}
+grep -Fq 'send-keys -H 1b 5b 35 3b 33 30 30 31 33 7e' "$repo_root/config/tmux/tmux.conf" || {
+  printf 'tmux does not forward the private clear sequence to interactive shells.\n' >&2
+  exit 1
+}
+grep -Fq "if-shell -F '#{==:#{@vim_setup_role},agent}' 'send-keys C-l'" "$repo_root/config/tmux/tmux.conf" || {
+  printf 'Cmd-K does not invoke the standard clear action in agent panes.\n' >&2
+  exit 1
+}
+if grep -F 'send-keys C-l' "$repo_root/config/tmux/tmux.conf" |
+  grep -Fvq "if-shell -F '#{==:#{@vim_setup_role},agent}' 'send-keys C-l'"; then
+  printf 'Cmd-K leaks Ctrl-L outside Workon agent panes.\n' >&2
+  exit 1
+fi
+if rg -q 'User0|30012' "$repo_root/config/nvim"; then
+  printf 'Neovim references the private Cmd-K terminal transport.\n' >&2
+  exit 1
+fi
 grep -Fxq 'set -as terminal-features ",xterm-kitty:RGB:hyperlinks"' "$repo_root/config/tmux/tmux.conf" || {
   printf 'tmux does not advertise OSC 8 hyperlinks to Kitty clients.\n' >&2
   exit 1
@@ -148,6 +186,14 @@ grep -Fq '# Compact Kanagawa Dragon status line.' "$repo_root/config/tmux/tmux.c
 TMUX_TMPDIR="$tmp_root" tmux -L "$server" -f "$repo_root/config/tmux/tmux.conf" new-session -d
 prefix="$(TMUX_TMPDIR="$tmp_root" tmux -L "$server" show-options -gv prefix)"
 [[ "$prefix" == "C-b" ]] || { printf 'Expected isolated tmux prefix C-b, found %s.\n' "$prefix" >&2; exit 1; }
+clear_binding="$(TMUX_TMPDIR="$tmp_root" tmux -L "$server" list-keys -T root | awk '$4 == "User0"')"
+[[ "$clear_binding" == *"clear-history -H"* && \
+  "$clear_binding" == *"send-keys -H 1b 5b 35 3b 33 30 30 31 33 7e"* && \
+  "$clear_binding" == *'#{==:#{@vim_setup_role},agent}'* && \
+  "$clear_binding" == *"send-keys C-l"* ]] || {
+  printf 'Isolated tmux did not load the complete User0 clear binding: %s\n' "$clear_binding" >&2
+  exit 1
+}
 
 export XDG_CONFIG_HOME="$repo_root/config"
 export VIM_SETUP_TESTING=1
