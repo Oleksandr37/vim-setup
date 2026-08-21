@@ -24,6 +24,8 @@ release_cache="$cache_root/latest.json"
 etag_file="$cache_root/latest.etag"
 git_cache="$cache_root/repository.git"
 active_lock=""
+managed_backup_root=""
+managed_backed_up=false
 
 cleanup_lock() {
   if [[ -n "$active_lock" ]]; then rmdir "$active_lock" 2>/dev/null || true; fi
@@ -207,15 +209,18 @@ link_managed_path() {
   source="$install_root/current/$relative"
   if [[ -L "$target" && "$(readlink "$target")" == "$source" ]]; then return; fi
   if [[ -e "$target" || -L "$target" ]]; then
-    backup="$state_root/backups/$(date +%Y%m%d-%H%M%S)/${target#"$HOME"/}"
+    backup="$managed_backup_root/${target#"$HOME"/}"
     mkdir -p "$(dirname "$backup")"
     mv "$target" "$backup"
+    managed_backed_up=true
   fi
   mkdir -p "$(dirname "$target")"
   ln -s "$source" "$target"
 }
 
 ensure_managed_links() {
+  managed_backup_root="$state_root/backups/$(date +%Y%m%d-%H%M%S)"
+  managed_backed_up=false
   link_managed_path config/nvim "$HOME/.config/nvim"
   link_managed_path config/tmux/tmux.conf "$HOME/.config/tmux/tmux.conf"
   link_managed_path config/kitty/kitty.conf "$HOME/.config/kitty/kitty.conf"
@@ -226,6 +231,9 @@ ensure_managed_links() {
   link_managed_path bin/workon-update "$HOME/.local/bin/workon-update"
   link_managed_path bin/vim-setup-run "$HOME/.local/bin/vim-setup-run"
   link_managed_path bin/vim-setup-doctor "$HOME/.local/bin/vim-setup-doctor"
+  if $managed_backed_up; then
+    printf 'Previous configuration was moved to: %s\n' "$managed_backup_root"
+  fi
 }
 
 atomic_link() {

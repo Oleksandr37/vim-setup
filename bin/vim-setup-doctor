@@ -2,7 +2,7 @@
 set -uo pipefail
 
 failures=0
-checks=(nvim tmux kitty workon workon-update git cc rg fd fzf lazygit magick tree-sitter node npm python3)
+checks=(nvim tmux kitty workon workon-update git cc rg fd fzf lazygit magick tree-sitter node npm python3 zsh)
 optional_checks=(terraform docker)
 
 printf 'vim-setup doctor\n\n'
@@ -14,6 +14,25 @@ for command in "${checks[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+brew_prefix="$(brew --prefix 2>/dev/null || true)"
+if [[ -n "$brew_prefix" ]]; then
+  shell_features=(
+    "autosuggestions|$brew_prefix/opt/zsh-autosuggestions/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+    "completions|$brew_prefix/opt/zsh-completions/share/zsh-completions"
+    "syntax color|$brew_prefix/opt/zsh-syntax-highlighting/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  )
+  for shell_feature in "${shell_features[@]}"; do
+    label="${shell_feature%%|*}"
+    path="${shell_feature#*|}"
+    if [[ -e "$path" ]]; then
+      printf '  [ok]      zsh %-14s\n' "$label"
+    else
+      printf '  [missing] zsh %s\n' "$label"
+      failures=$((failures + 1))
+    fi
+  done
+fi
 
 for command in "${optional_checks[@]}"; do
   if command -v "$command" >/dev/null 2>&1; then

@@ -19,6 +19,7 @@ while [[ -L "$script_path" ]]; do
 done
 script_root="$(cd "$(dirname "$script_path")/.." && pwd -P)"
 update_command="$script_root/bin/workon-update"
+printf -v shell_command '%q' "$script_root/bin/workon-shell"
 
 usage() {
   cat >&2 <<'EOF'
@@ -73,6 +74,7 @@ ensure_internal_session() {
     tmux_cmd set-option -p -t "$session:$name" @vim_setup_internal 1
     tmux_cmd set-option -t "$session" status off
   fi
+  tmux_cmd set-option -t "$session" default-command "$shell_command"
   configure_tmux_environment
 }
 
