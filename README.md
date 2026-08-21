@@ -22,7 +22,7 @@ For the current local checkout:
 ./install.sh
 ```
 
-The public bootstrap installs the latest signed GitHub release into a versioned directory under `~/.local/share/workon`; it does not execute an arbitrary plugin update from `main`. A local checkout remains a development installation and links its files directly, so this repository can be tested without replacing it with a release. Both modes ask Homebrew to install only missing packages, move replaced config into a timestamped backup, and restore the plugin commits recorded in `lazy-lock.json`. Preview a local installation first with `./install.sh --dry-run`.
+The public bootstrap installs the latest signed GitHub release into a versioned directory under `~/.local/share/workon`; it does not execute an arbitrary plugin update from `main`. A local checkout remains a development installation and links its files directly, so this repository can be tested without replacing it with a release. Both modes ask Homebrew to install only missing packages, move replaced Kitty/tmux/Neovim/Lazygit config into a timestamped backup, print that backup's location, and restore the plugin commits recorded in `lazy-lock.json`. Workon never edits or appends to `~/.zshrc`; it reads it only when starting a Workon shell. Preview a local installation first with `./install.sh --dry-run`.
 
 Your existing Neovim/Kitty/tmux configuration is not changed merely by cloning this repository. It changes only when you run the installer.
 

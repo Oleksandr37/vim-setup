@@ -56,6 +56,15 @@ workon_env=(
   VIM_SETUP_TMUX_SOCKET="workon-update-test-$$"
 )
 
+mkdir -p "$test_home/.config/nvim" "$test_home/.config/tmux" "$test_home/.config/kitty" \
+  "$test_home/Library/Application Support/lazygit"
+printf 'private-zsh-config\n' > "$test_home/.zshrc"
+printf 'original-nvim\n' > "$test_home/.config/nvim/original.txt"
+printf 'original-tmux\n' > "$test_home/.config/tmux/tmux.conf"
+printf 'original-kitty\n' > "$test_home/.config/kitty/kitty.conf"
+printf 'original-kitty-theme\n' > "$test_home/.config/kitty/kanagawa-dragon.conf"
+printf 'original-lazygit\n' > "$test_home/Library/Application Support/lazygit/config.yml"
+
 publish_release 0.2.0
 "${workon_env[@]}" "$repo_root/bin/workon-update" install --yes >/dev/null
 current="$test_home/.local/share/workon/current"
@@ -63,6 +72,16 @@ current="$test_home/.local/share/workon/current"
 [[ "$(<"$current/VERSION")" == 0.2.0 ]] || fail 'first release was not activated'
 [[ "$(readlink "$test_home/.local/bin/workon")" == "$current/bin/vim-workspace" ]] || \
   fail 'workon command does not follow the managed current link'
+[[ "$(<"$test_home/.zshrc")" == private-zsh-config ]] || fail 'managed install modified the user zshrc'
+managed_backups="$test_home/.local/state/workon/backups"
+[[ "$(find "$managed_backups" -path '*/.config/nvim/original.txt' -type f -exec cat {} \;)" == original-nvim ]] ||
+  fail 'managed install did not back up the existing Neovim config'
+[[ "$(find "$managed_backups" -path '*/.config/tmux/tmux.conf' -type f -exec cat {} \;)" == original-tmux ]] ||
+  fail 'managed install did not back up the existing tmux config'
+[[ "$(find "$managed_backups" -path '*/.config/kitty/kitty.conf' -type f -exec cat {} \;)" == original-kitty ]] ||
+  fail 'managed install did not back up the existing Kitty config'
+[[ "$(find "$managed_backups" -path '*/Application Support/lazygit/config.yml' -type f -exec cat {} \;)" == original-lazygit ]] ||
+  fail 'managed install did not back up the existing Lazygit config'
 
 publish_release 0.3.0
 "${workon_env[@]}" "$test_home/.local/bin/workon" update --yes >/dev/null
@@ -80,7 +99,14 @@ fi
 [[ "$(<"$current/VERSION")" == 0.2.0 ]] || fail 'failed verification changed the active release'
 
 source_home="$test_root/source-home"
-mkdir -p "$source_home"
+mkdir -p "$source_home/.config/nvim" "$source_home/.config/tmux" "$source_home/.config/kitty" \
+  "$source_home/Library/Application Support/lazygit"
+printf 'private-source-zsh-config\n' > "$source_home/.zshrc"
+printf 'source-original-nvim\n' > "$source_home/.config/nvim/original.txt"
+printf 'source-original-tmux\n' > "$source_home/.config/tmux/tmux.conf"
+printf 'source-original-kitty\n' > "$source_home/.config/kitty/kitty.conf"
+printf 'source-original-kitty-theme\n' > "$source_home/.config/kitty/kanagawa-dragon.conf"
+printf 'source-original-lazygit\n' > "$source_home/Library/Application Support/lazygit/config.yml"
 env HOME="$source_home" WORKON_INSTALL_TESTING=1 VIM_SETUP_TMUX_SOCKET="workon-install-test-$$" \
   "$repo_root/install.sh" --skip-packages --skip-plugins >/dev/null
 plist="$source_home/Library/LaunchAgents/dev.workon.update-check.plist"
@@ -88,5 +114,15 @@ plist="$source_home/Library/LaunchAgents/dev.workon.update-check.plist"
 plutil -lint "$plist" >/dev/null || fail 'hourly launch agent plist is invalid'
 grep -q '<integer>3600</integer>' "$plist" || fail 'hourly launch interval is not 3600 seconds'
 grep -q '<string>--background</string>' "$plist" || fail 'launch agent does not use the quiet checker'
+[[ "$(<"$source_home/.zshrc")" == private-source-zsh-config ]] || fail 'source install modified the user zshrc'
+source_backups="$source_home/.local/state/vim-setup/backups"
+[[ "$(find "$source_backups" -path '*/.config/nvim/original.txt' -type f -exec cat {} \;)" == source-original-nvim ]] ||
+  fail 'source install did not back up the existing Neovim config'
+[[ "$(find "$source_backups" -path '*/.config/tmux/tmux.conf' -type f -exec cat {} \;)" == source-original-tmux ]] ||
+  fail 'source install did not back up the existing tmux config'
+[[ "$(find "$source_backups" -path '*/.config/kitty/kitty.conf' -type f -exec cat {} \;)" == source-original-kitty ]] ||
+  fail 'source install did not back up the existing Kitty config'
+[[ "$(find "$source_backups" -path '*/Application Support/lazygit/config.yml' -type f -exec cat {} \;)" == source-original-lazygit ]] ||
+  fail 'source install did not back up the existing Lazygit config'
 
 printf 'Signed release update and rollback smoke tests passed.\n'
